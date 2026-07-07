@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ReAi Asistanı</string>
+    <string name="title_activity_main">ReAi Asistanı</string>
+    <string name="package_name">com.reai.app</string>
+    <string name="custom_url_scheme">com.reai.app</string>
+</resources>

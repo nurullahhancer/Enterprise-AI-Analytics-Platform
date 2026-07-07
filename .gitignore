@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build outputs and caches
+dist/
+build/
+.next/
+.vite/
+*.tsbuildinfo
+coverage/
+**/bin/
+**/obj/
+android/.gradle/
+android/app/build/
+frontend/.next/
+
+# Local environment and secrets
+.env*
+!.env.example
+
+# Local databases and uploaded runtime data
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and OS/editor noise
+*.log
+.DS_Store
+.idea/
+.pytest_cache/
+.ruff_cache/

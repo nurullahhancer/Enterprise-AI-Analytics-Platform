@@ -1,0 +1,6 @@
+@EnterpriseAI.Api_HostAddress = http://localhost:3011
+
+GET {{EnterpriseAI.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

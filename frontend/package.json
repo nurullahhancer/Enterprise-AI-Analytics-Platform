@@ -1,0 +1,26 @@
+{
+  "name": "enterprise-ai-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-react": "0.468.0",
+    "next": "^16.2.10",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "recharts": "^3.9.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "eslint": "9.17.0",
+    "eslint-config-next": "^16.2.10",
+    "typescript": "5.7.2"
+  }
+}
