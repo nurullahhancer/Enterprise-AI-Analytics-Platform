@@ -21,7 +21,7 @@ Koddan çıkarılan gerçek kullanıcı akışlarını en kapsamlı biçimde uyg
 
 Denetimde kritik kimlik doğrulama/yetkilendirme kusurları, düz metin konnektör ayarları, SSRF riski, sahte veri üreten akışlar, dışarıya açık altyapı portları, kalıcı olmayan/in-memory servis davranışları, zayıf parola özeti, güvensiz JWT varsayılanı ve üretim operasyon eksikleri tespit edildi. Kanonik uygulamada kritik bulgular giderildi; production image/Compose sertleştirildi ve otomatik testler genişletildi.
 
-Sistem kod, container ve IP tabanlı HTTPS yapılandırması açısından production adayıdır. `https://45.133.36.77` geçerli Let's Encrypt IP sertifikasıyla yayındadır; HTTP yalnız HTTPS yönlendirmesi ve ACME doğrulaması için açıktır. Müşteri girişine açılmadan önce sunucu sahibinin benzersiz secret'ları sağlaması ve ilk yönetici hesabını oluşturması zorunludur.
+Sistem kod, container, kimlik doğrulama ve IP tabanlı HTTPS yapılandırması açısından kontrollü teste hazırdır. `https://45.133.36.77` geçerli Let's Encrypt IP sertifikasıyla yayındadır; HTTP yalnız HTTPS yönlendirmesi ve ACME doğrulaması için açıktır. Sunucu sahibinin açık onayıyla benzersiz runtime anahtarları yalnız izlenmeyen `0600` `.env` dosyasına üretildi, bir test yöneticisi bootstrap edildi, public kayıt kapatıldı ve tek kullanımlık bootstrap token environment'dan temizlendi.
 
 ## 2. Sistemin amacı
 
@@ -281,7 +281,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 
 | Kontrol | Son durum |
 |---|---|
-| Kaynak koda gömülü production secret | Kaldırıldı; `.env.example` yalnızca boş placeholder içerir |
+| Kaynak koda gömülü production secret | Kaldırıldı; `.env.example` boş placeholder içerir, gerçek runtime değerleri yalnız Git dışı `0600` `.env` dosyasındadır |
 | Parola saklama | scrypt + random salt; eski PBKDF2 girişte yükseltilir |
 | JWT | Secret zorunlu, HS256 allowlist, issuer/audience/JTI/8 saat/token version |
 | Authentication brute force | 5 deneme / 15 dakika / IP+e-posta (process içi) |
@@ -328,7 +328,8 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 | Next.js referans lint/build | Başarılı | Type-check ve optimize production build |
 | Next.js referans npm audit | Başarılı | Production ve development bağımlılıklarının tamamında 0 bulgu |
 | Ana Compose parse | Başarılı | `docker compose config --quiet` |
-| Production runtime smoke | Kısmi/öngörülen fail-closed | HTTPS ana sayfa 200, HTTP 308, TLS zinciri/TLS 1.3 doğrulandı, dış IP:3000 reddedildi; DB+ML ok; gerçek JWT secret olmadığı için health HTTP 503/degraded ve app unhealthy |
+| Production runtime smoke | Başarılı | HTTPS ana sayfa 200, HTTP 308, TLS zinciri/TLS 1.3 doğrulandı, dış IP:3000 reddedildi; DB+ML+authentication ok ve iki container healthy |
+| Canlı test admin akışı | Başarılı | Bootstrap 201; HTTPS login, `/api/me` admin rolü ve logout başarılı; sonrasında public register 403 ve bootstrap token temiz |
 | IP sertifikası yenileme | Başarılı | Certbot staging issuance ve `renew --dry-run --run-deploy-hooks` başarılı; timer enabled/active |
 | Restart/kalıcılık | Başarılı | Kontrollü SIGTERM/checkpoint sonrası aynı SQLite volume/inode ve güvenli dosya izinleri korundu |
 
@@ -340,6 +341,8 @@ Vite build çıktısında yaklaşık 795 KB JavaScript bundle için performans u
 
 - Uygulama ve `/api/health` endpoint'inin açılması
 - Bootstrap secret yokken 503, yanlış token'da 403 ve doğru header ile admin rol ataması
+- Gerçek VDS bootstrap akışında bir test admin oluşturma, HTTPS giriş, admin rol doğrulama ve çıkış
+- Bootstrap sonrasında public registration'ın 403 dönmesi ve tek kullanımlık token'ın kaldırılması
 - Geçerli kullanıcı girişi ve `/api/me` ile oturum doğrulama
 - Çıkıştan sonra aynı JWT'nin yeniden kullanılamaması
 - Hatalı giriş ve zayıf/geçersiz veri reddi
@@ -362,13 +365,11 @@ Gerçek e-posta, SMS, ödeme veya ücretli AI çağrısı yapılmadı. Harici Ge
 
 ### Müşteri açılışından önce zorunlu
 
-1. Benzersiz `JWT_SECRET` sağlanmalı; aksi halde auth kapalı, health HTTP 503/degraded ve app container `unhealthy` durumundadır.
-2. Benzersiz `DATA_ENCRYPTION_KEY` sağlanmalı; aksi halde konnektör oluşturma kapalıdır.
-3. `BOOTSTRAP_ADMIN_EMAIL` ve `BOOTSTRAP_ADMIN_TOKEN` sağlanıp ilk admin güvenli header akışıyla oluşturulmalı; ardından public registration kapatılıp token kaldırılmalıdır.
-4. Kısa ömürlü IP sertifikasının yenileme timer'ı ve sona erme tarihi dış izlemeyle alarm altına alınmalıdır.
-5. Gerçek SQLite volume yedekleme takvimi ve off-site saklama uygulanmalıdır.
-6. VDS snapshot/console erişimi bulunan planlı bakımda bekleyen Ubuntu güvenlik güncellemeleri uygulanmalı, reboot sonrası SSH/Nginx/Docker/HTTPS doğrulanmalıdır.
-7. Sağlayıcı firewall veya onaylı UFW politikasıyla yalnız gerekli 22/80/443 portları izinli tutulmalıdır; SSH erişimini riske atan uzaktan firewall değişikliği yapılmamalıdır.
+1. Root-only handoff dosyasındaki geçici test admin parolası ilk girişte değiştirilmeli; gerçek müşteri açılışında kurumsal isim/e-posta hesabı oluşturulup test hesabının korunması veya silinmesi açıkça kararlaştırılmalıdır.
+2. Kısa ömürlü IP sertifikasının yenileme timer'ı ve sona erme tarihi dış izlemeyle alarm altına alınmalıdır.
+3. Gerçek SQLite volume yedekleme takvimi ve off-site saklama uygulanmalıdır.
+4. VDS snapshot/console erişimi bulunan planlı bakımda bekleyen Ubuntu güvenlik güncellemeleri uygulanmalı, reboot sonrası SSH/Nginx/Docker/HTTPS doğrulanmalıdır.
+5. Sağlayıcı firewall veya onaylı UFW politikasıyla yalnız gerekli 22/80/443 portları izinli tutulmalıdır; SSH erişimini riske atan uzaktan firewall değişikliği yapılmamalıdır.
 
 ### Ürün/ölçek sınırları
 
@@ -421,6 +422,6 @@ Başlıca değişiklik alanları:
 
 ## 16. Sonuç
 
-Kritik sahte davranışlar ve auth/RBAC/SSRF/secret/port açıklıkları giderilmiş, kanonik uygulama belirlenmiş, production container sertleştirilmiş ve ana iş akışları otomatik testlerle doğrulanmıştır. Kanonik Compose yığını VDS'de `https://45.133.36.77/` adresinde geçerli IP sertifikasıyla çalışmaktadır; `3000` yalnız loopback'te, ML yalnız internal ağdadır. Gerçek auth secret'ı olmadığı için app bilinçli olarak HTTP 503/degraded ve `unhealthy`; login kapalıdır.
+Kritik sahte davranışlar ve auth/RBAC/SSRF/secret/port açıklıkları giderilmiş, kanonik uygulama belirlenmiş, production container sertleştirilmiş ve ana iş akışları otomatik testlerle doğrulanmıştır. Kanonik Compose yığını VDS'de `https://45.133.36.77/` adresinde geçerli IP sertifikasıyla çalışmaktadır; `3000` yalnız loopback'te, ML yalnız internal ağdadır. Runtime auth/şifreleme anahtarları yapılandırılmış, test admin hesabı doğrulanmış, health `ok` ve iki container `healthy` durumundadır.
 
-Sistem şu şartlar tamamlanmadan “müşteriye açık ve tam teslim” sayılmamalıdır: gerçek secret'ların sağlanması, token'lı ilk admin kaydı, yedekleme takvimi, sertifika sona erme alarmı ve kimlikli dış erişim smoke testi. Domain artık teknik engel değildir. Ayrıntılı operasyon adımları `DEPLOYMENT.md` içindedir.
+Sistem kontrollü test kullanımı için hazırdır. “Müşteriye açık ve tam teslim” öncesinde geçici parolanın değiştirilmesi, gerçek operatör hesabı kararı, yedekleme takvimi, sertifika sona erme alarmı, host güvenlik güncellemeleri ve firewall politikası tamamlanmalıdır. Domain teknik engel değildir. Ayrıntılı operasyon adımları `DEPLOYMENT.md` içindedir.
