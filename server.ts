@@ -6,6 +6,7 @@ import logger from './src/lib/logger';
 import { authenticateJWT } from './src/server/index';
 import { checkDatabase, closeDatabase, databaseReady } from './src/lib/db';
 import { isAuthConfigured } from './src/lib/auth';
+import { getAiConfiguration } from './src/server/ai/provider';
 
 // Route modules
 import authRouter from './src/server/routes/auth';
@@ -92,19 +93,20 @@ async function startServer() {
       })()
     ]);
     const auth = isAuthConfigured();
+    const ai = getAiConfiguration();
     res.status(database && mlService && auth ? 200 : 503).json({
       status: database && mlService && auth ? 'ok' : 'degraded',
       checks: {
         database: database ? 'ok' : 'error',
         mlService: mlService ? 'ok' : 'error',
         authentication: auth ? 'ok' : 'configuration-required',
-        ai: process.env.GEMINI_API_KEY ? 'configured' : 'optional-key-missing'
+        ai: ai.configured ? `configured:${ai.provider}` : `optional-${ai.issue || 'not-configured'}`
       }
     });
   });
   app.get('/api/config', (_req, res) => res.json({
     registrationEnabled: process.env.NODE_ENV === 'test' || process.env.ALLOW_PUBLIC_REGISTRATION === 'true',
-    aiEnabled: Boolean(process.env.GEMINI_API_KEY)
+    aiEnabled: getAiConfiguration().configured && process.env.ALLOW_EXTERNAL_AI_DATA === 'true'
   }));
   app.use('/api', authRouter);                          // /api/register, /api/login
 
@@ -137,9 +139,9 @@ async function startServer() {
     const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
     let message = 'Sunucu tarafında beklenmeyen bir hata oluştu.';
     if (err.status === 429 || err.message?.includes('Quota exceeded') || err.message?.includes('429'))
-      message = 'Gemini API kotanız doldu. Lütfen 1 dakika bekleyip tekrar deneyin.';
+      message = 'AI servis kotası doldu. Lütfen kısa süre sonra tekrar deneyin.';
     else if (err.message?.includes('API key not valid'))
-      message = 'Geçersiz Gemini API anahtarı.';
+      message = 'Geçersiz AI servis anahtarı.';
     res.status(status).json({ error: { code: err.code || 'INTERNAL_SERVER_ERROR', message } });
   });
 

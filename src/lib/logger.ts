@@ -6,7 +6,7 @@ function redactText(input: string): string {
   let value = input
     .replace(/(bearer\s+)[a-z0-9._~+\/-]+=*/gi, '$1[REDACTED]')
     .replace(/([?&](?:api[_-]?key|access[_-]?token|token|secret|password|signature|sig|auth)=)[^&\s]+/gi, '$1[REDACTED]');
-  for (const name of ['JWT_SECRET', 'GEMINI_API_KEY', 'DATA_ENCRYPTION_KEY', 'BOOTSTRAP_ADMIN_TOKEN', 'ML_INTERNAL_API_KEY']) {
+  for (const name of ['JWT_SECRET', 'GEMINI_API_KEY', 'NVIDIA_API_KEY', 'DATA_ENCRYPTION_KEY', 'BOOTSTRAP_ADMIN_TOKEN', 'ML_INTERNAL_API_KEY']) {
     const secret = process.env[name];
     if (secret && secret.length >= 8) value = value.split(secret).join('[REDACTED]');
   }

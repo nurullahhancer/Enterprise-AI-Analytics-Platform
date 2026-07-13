@@ -109,14 +109,20 @@ unset INITIAL_ADMIN_PASSWORD
 
 Admin hesabı oluşmadan public registration'ı açık bırakmayın.
 
-### 3.4 Opsiyonel Gemini
+### 3.4 Opsiyonel AI sağlayıcısı
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
-| `GEMINI_API_KEY` | boş | AI sohbeti için harici servis anahtarı |
+| `AI_PROVIDER` | `auto` | `nvidia`, `gemini` veya anahtara göre otomatik seçim |
+| `NVIDIA_API_KEY` | boş | NVIDIA NIM/OpenAI uyumlu sohbet servisi anahtarı |
+| `NVIDIA_AI_MODEL` | `deepseek-ai/deepseek-v4-pro` | NVIDIA model adı |
+| `GEMINI_API_KEY` | boş | Geriye dönük Gemini servis anahtarı |
+| `GEMINI_AI_MODEL` | `gemini-2.5-flash` | Gemini model adı |
 | `ALLOW_EXTERNAL_AI_DATA` | `false` | Müşteri verisinin dış AI servisine gönderimine açık yönetici izni |
+| `AI_REQUEST_TIMEOUT_MS` | `120000` | Harici AI istek zaman aşımı |
+| `AI_MAX_OUTPUT_TOKENS` | `1024` | Yanıt token limiti |
 
-İki değer birlikte etkin değilse production AI çağrısı yapılmaz. Müşteri sözleşmesi, veri sınıflandırması ve sağlayıcı koşulları incelenmeden `ALLOW_EXTERNAL_AI_DATA=true` yapmayın.
+Servis anahtarı ve `ALLOW_EXTERNAL_AI_DATA=true` birlikte etkin değilse AI çağrısı yapılmaz. Müşteri sözleşmesi, veri sınıflandırması ve sağlayıcı koşulları incelenmeden harici AI sağlayıcısına gerçek müşteri verisi göndermeyin.
 
 ### 3.5 REST konnektörü
 
@@ -508,7 +514,7 @@ Tarayıcı smoke testi:
 6. Çıkış sonrası korumalı sayfa açılamıyor ve eski JWT `/api/me` üzerinde 401 alıyor.
 7. `docker compose restart` sonrası kullanıcı ve veri korunuyor.
 
-Gerçek ödeme/e-posta/SMS veya ücretli AI testi yapmayın. Gemini gerekiyorsa sağlayıcının test/kota politikasına uygun ve müşteri onaylı veriyle kontrollü test yapın.
+Gerçek ödeme/e-posta/SMS testi yapmayın. NVIDIA/Gemini gibi harici AI servislerini yalnız sağlayıcının test/kota politikasına uygun, müşteri onaylı ve hassas olmayan veriyle kontrollü test edin.
 
 ## 16. Sorun giderme
 
@@ -587,7 +593,7 @@ SQLite native modülü için production Dockerfile Debian Trixie tabanlıdır. B
 - [ ] İlk admin token header'ıyla oluşturuldu; public registration kapatıldı ve bootstrap token kaldırıldı
 - [ ] Viewer/analyst/admin RBAC smoke testleri başarılı
 - [ ] CSV yükleme, dashboard, ETL/ML ve rapor başarılı
-- [ ] Gemini kapalı veya açık müşteri onayıyla yapılandırılmış
+- [ ] Harici AI kapalı veya açık müşteri onayıyla NVIDIA/Gemini üzerinde yapılandırılmış
 - [ ] REST allowlist yalnızca gerekli hostları içeriyor
 - [ ] Container'lar non-root/healthy ve restart policy etkin
 - [ ] Restart sonrasında SQLite verisi korunuyor

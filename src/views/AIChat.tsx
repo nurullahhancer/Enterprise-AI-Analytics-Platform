@@ -61,7 +61,7 @@ export default function AIChat({
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error?.message || data.error || 'Gemini yanıtı alınamadı.');
+        throw new Error(data.error?.message || data.error || 'AI yanıtı alınamadı.');
       }
       
       const assistantMsg: ChatMessage = {

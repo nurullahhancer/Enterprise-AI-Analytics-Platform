@@ -1,10 +1,10 @@
 import { Router, Response, NextFunction } from 'express';
-import { GoogleGenAI } from '@google/genai';
 import { AuthenticatedRequest } from '../index';
 import { getCombinedUserDataset } from '../datasets/combined';
 import { getDocumentsForSearch } from '../../lib/db';
 import { SYSTEM_PROMPT, sanitizeQuery } from '../../lib/prompts';
 import logger from '../../lib/logger';
+import { AiProviderError, generateAiResponse, getAiConfiguration } from '../ai/provider';
 
 const router = Router();
 const aiUsage = new Map<string, { count: number; resetAt: number }>();
@@ -64,9 +64,11 @@ router.post('/', async (req: AuthenticatedRequest, res: Response, next: NextFunc
     const { message, mode } = req.body;
     if (typeof message !== 'string' || !message.trim() || message.length > 4_000)
       return res.status(400).json({ error: { code: 'INVALID_MESSAGE', message: 'Mesaj 1-4000 karakter arasında olmalıdır.' } });
-    if (!process.env.GEMINI_API_KEY)
+
+    const aiConfig = getAiConfiguration();
+    if (!aiConfig.configured)
       return res.status(503).json({ error: { code: 'AI_NOT_CONFIGURED', message: 'AI özelliği için servis anahtarı henüz yapılandırılmadı.' } });
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_EXTERNAL_AI_DATA !== 'true')
+    if (process.env.ALLOW_EXTERNAL_AI_DATA !== 'true')
       return res.status(403).json({ error: { code: 'AI_DATA_SHARING_DISABLED', message: 'Müşteri verisinin harici AI servisine gönderimi yönetici tarafından kapalıdır.' } });
 
     const email = req.user!.email;
@@ -74,8 +76,6 @@ router.post('/', async (req: AuthenticatedRequest, res: Response, next: NextFunc
       res.setHeader('Retry-After', '3600');
       return res.status(429).json({ error: { code: 'AI_RATE_LIMITED', message: 'Saatlik AI kullanım kotanıza ulaştınız.' } });
     }
-
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const isRag = mode === 'rag';
     
@@ -101,15 +101,20 @@ router.post('/', async (req: AuthenticatedRequest, res: Response, next: NextFunc
       prompt = `${SYSTEM_PROMPT}\n\nKullanici veri seti bilgisi:\n${context}\n\nKullanici Sorusu: ${sanitizeQuery(message)}`;
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { maxOutputTokens: 1_024, temperature: 0.2 }
-    });
+    const response = await generateAiResponse(prompt);
 
-    logger.info('AI yanıtı tamamlandı.', { mode: isRag ? 'rag' : 'dataset', durationMs: Date.now() - t0 });
+    logger.info('AI yanıtı tamamlandı.', {
+      mode: isRag ? 'rag' : 'dataset',
+      provider: response.provider,
+      model: response.model,
+      durationMs: Date.now() - t0
+    });
     res.json({ response: response.text, warning: null });
   } catch (err) {
+    if (err instanceof AiProviderError) {
+      if (err.retryAfter) res.setHeader('Retry-After', err.retryAfter);
+      return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    }
     next(err);
   }
 });
