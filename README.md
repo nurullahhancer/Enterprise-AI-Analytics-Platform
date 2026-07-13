@@ -21,7 +21,7 @@ Tarayıcı / Reverse proxy
 - Web/API: Node.js 22, Express, React 19, Vite, TypeScript
 - Kalıcı veri: SQLite ve Docker named volume (`app-data`)
 - ML: FastAPI, pandas, NumPy ve scikit-learn; dışarıya port yayınlanmaz
-- Kimlik doğrulama: 8 saatlik HS256 JWT, scrypt parola özeti, token sürümleme
+- Kimlik doğrulama: 8 saatlik HS256 JWT, scrypt parola özeti, token sürümleme ve sunucu tarafı çıkış iptali
 - Yetkilendirme: `admin`, `analyst`, `viewer` rolleri ve sunucu tarafı kontroller
 - İsteğe bağlı AI: Google Gemini; müşteri verisi ancak açık izin değişkeni de etkinse gönderilir
 - İsteğe bağlı veri kaynağı: yalnızca allowlist ile sınırlandırılmış HTTPS/JSON REST konnektörü

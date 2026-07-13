@@ -147,6 +147,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 - Token; issuer, audience, subject, JTI ve token sürümü içerir, 8 saatte sona erer.
 - Her korumalı istekte kullanıcı ve güncel rol veritabanından tekrar okunur.
 - Parola değişikliği token sürümünü artırır ve yeni token döndürür.
+- Çıkış endpoint'i token sürümünü artırır; kullanılan JWT sonraki istekte 401 olur, UI yerel token'ı her durumda temizler.
 - Beş başarısız girişten sonra aynı IP/e-posta çifti; varsayılan 30 rezervasyondan sonra IP geneli 15 dakika sınırlandırılır. Sayaçlar process-içidir.
 
 ### 7.3 Veri ve analiz
@@ -224,6 +225,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 - Açık kayıt feature flag'e bağlandı; tam bootstrap e-posta eşleşmesine ek olarak constant-time doğrulanan ayrı token header'ı zorunlu kılındı.
 - Login brute-force sınırı, güçlü parola ve normalize edilmiş e-posta/ad doğrulaması eklendi.
 - Parola değişikliği mevcut parola doğrulamasına ve token rotasyonuna bağlandı.
+- `/api/logout` token sürümünü artırarak mevcut JWT'yi sunucuda iptal eder hale getirildi.
 - Hesap silme mevcut parola doğrulamasına ve ilişkili kullanıcı verilerinin temizlenmesine bağlandı.
 - Son admin koruması ve self-role-switch kaldırılması eklendi.
 
@@ -310,7 +312,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 |---|---|---|
 | Kök TypeScript lint/type-check | Başarılı | `tsc --noEmit` |
 | Kök production build | Başarılı | Vite SPA + esbuild Express bundle |
-| Kök Vitest/Supertest | **18/18 başarılı** | Health, kayıt/giriş, geçerli-geçersiz bootstrap token, `/me`, viewer RBAC, atomik son-admin/eşzamanlı SQLite yazımı, gerçek ETL ve dört rapor, CSV formül koruması, kullanıcı izolasyonu, birleşik çoklu dataset, forecast/profile |
+| Kök Vitest/Supertest | **19/19 başarılı** | Health, kayıt/giriş/çıkış token iptali, geçerli-geçersiz bootstrap token, `/me`, viewer RBAC, atomik son-admin/eşzamanlı SQLite yazımı, gerçek ETL ve dört rapor, CSV formül koruması, kullanıcı izolasyonu, birleşik çoklu dataset, forecast/profile |
 | Kök npm audit | Başarılı | Yüksek/kritik bulgu yok; tüm npm audit sonucu 0 bulgu |
 | FastAPI Ruff | Başarılı | `app` ve `tests` statik kontrolü |
 | FastAPI pytest | **16/16 başarılı** | Health, predict, anomaly, cluster, analyze, aşırı sütun limiti ve tenant/parametre/period duyarlı cache anahtarı |
@@ -332,6 +334,7 @@ Vite build çıktısında yaklaşık 795 KB JavaScript bundle için performans u
 - Uygulama ve `/api/health` endpoint'inin açılması
 - Bootstrap secret yokken 503, yanlış token'da 403 ve doğru header ile admin rol ataması
 - Geçerli kullanıcı girişi ve `/api/me` ile oturum doğrulama
+- Çıkıştan sonra aynı JWT'nin yeniden kullanılamaması
 - Hatalı giriş ve zayıf/geçersiz veri reddi
 - Token olmadan korumalı endpoint'e erişimin reddi
 - Viewer rolünün yazma işlemlerinden engellenmesi

@@ -91,6 +91,13 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    const token = localStorage.getItem('reai_token');
+    if (token) {
+      void fetch(getApiUrl('/api/logout'), {
+        method: 'POST',
+        headers: authHeaders()
+      }).catch(() => undefined);
+    }
     localStorage.removeItem('reai_token');
     setUser(null);
     setChatMessages(createInitialChat());

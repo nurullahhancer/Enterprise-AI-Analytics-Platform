@@ -105,6 +105,23 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     expect(me.body.user.role).toBe('analyst');
   });
 
+  it('revokes the current JWT on logout', async () => {
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email: 'new-user@enterprise.com', password: 'securePassword123' });
+    const token = login.body.token;
+
+    const logout = await request(app)
+      .post('/api/logout')
+      .set('Authorization', `Bearer ${token}`);
+    const reusedToken = await request(app)
+      .get('/api/me')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(logout.status).toBe(204);
+    expect(reusedToken.status).toBe(401);
+  });
+
   it('enforces viewer write restrictions on the server', async () => {
     const email = 'viewer-user@enterprise.com';
     await request(app)

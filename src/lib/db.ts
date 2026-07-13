@@ -499,6 +499,14 @@ export async function updateUser(email: string, name: string, passwordHash?: str
   }
 }
 
+export async function revokeUserTokens(email: string): Promise<boolean> {
+  const result = await run(
+    `UPDATE users SET token_version = token_version + 1 WHERE email = ?`,
+    [email]
+  );
+  return result.changes > 0;
+}
+
 export async function deleteUser(email: string): Promise<void> {
   return withTransaction(async () => {
     const user = await get<Pick<DbUser, 'role'>>('SELECT role FROM users WHERE email = ?', [email]);

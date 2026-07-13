@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Router, Response, NextFunction } from 'express';
 import { AuthenticatedRequest, authenticateJWT } from '../index';
-import { addAuditLog, createUser, findUserByEmail, updateUser, deleteUser, LastAdminError } from '../../lib/db';
+import { addAuditLog, createUser, findUserByEmail, updateUser, revokeUserTokens, deleteUser, LastAdminError } from '../../lib/db';
 import {
   AuthConfigurationError,
   generateToken,
@@ -186,6 +186,19 @@ router.post('/login', async (req: AuthenticatedRequest, res: Response, next: Nex
 router.get('/me', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
   const user = req.user!;
   res.json({ user: { id: user.email, email: user.email, name: user.name, role: user.role } });
+});
+
+router.post('/logout', authenticateJWT, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const email = req.user!.email;
+    await revokeUserTokens(email);
+    await addAuditLog(email, 'User Logout', 'Kullanıcı oturumunu sonlandırdı.', req.ip)
+      .catch(() => logger.warn('Çıkış audit kaydı yazılamadı.'));
+    logger.info('Kullanıcı çıkışı başarılı.', { actor: actorReference(email) });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.put('/user', authenticateJWT, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {

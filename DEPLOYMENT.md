@@ -502,7 +502,7 @@ Tarayıcı smoke testi:
 3. Admin giriş yapabiliyor, hatalı parola reddediliyor.
 4. Viewer yazma işlemi yapamıyor.
 5. CSV yükleme, dashboard, analiz ve rapor çalışıyor.
-6. Çıkış sonrası korumalı sayfa açılamıyor.
+6. Çıkış sonrası korumalı sayfa açılamıyor ve eski JWT `/api/me` üzerinde 401 alıyor.
 7. `docker compose restart` sonrası kullanıcı ve veri korunuyor.
 
 Gerçek ödeme/e-posta/SMS veya ücretli AI testi yapmayın. Gemini gerekiyorsa sağlayıcının test/kota politikasına uygun ve müşteri onaylı veriyle kontrollü test yapın.
