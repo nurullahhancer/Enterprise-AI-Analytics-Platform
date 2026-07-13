@@ -312,7 +312,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 |---|---|---|
 | Kök TypeScript lint/type-check | Başarılı | `tsc --noEmit` |
 | Kök production build | Başarılı | Vite SPA + esbuild Express bundle |
-| Kök Vitest/Supertest | **19/19 başarılı** | Health, kayıt/giriş/çıkış token iptali, geçerli-geçersiz bootstrap token, `/me`, viewer RBAC, atomik son-admin/eşzamanlı SQLite yazımı, gerçek ETL ve dört rapor, CSV formül koruması, kullanıcı izolasyonu, birleşik çoklu dataset, forecast/profile |
+| Kök Vitest/Supertest | **20/20 başarılı** | Health, kayıt/giriş/çıkış token iptali, geçerli-geçersiz bootstrap token, `/me`, viewer RBAC, multipart CSV CRUD/sıralama/aktif güncelleme, atomik son-admin/eşzamanlı SQLite yazımı, gerçek ETL ve dört rapor, CSV formül koruması, kullanıcı izolasyonu, birleşik çoklu dataset, forecast/profile |
 | Kök npm audit | Başarılı | Yüksek/kritik bulgu yok; tüm npm audit sonucu 0 bulgu |
 | FastAPI Ruff | Başarılı | `app` ve `tests` statik kontrolü |
 | FastAPI pytest | **16/16 başarılı** | Health, predict, anomaly, cluster, analyze, aşırı sütun limiti ve tenant/parametre/period duyarlı cache anahtarı |
@@ -340,6 +340,7 @@ Vite build çıktısında yaklaşık 795 KB JavaScript bundle için performans u
 - Viewer rolünün yazma işlemlerinden engellenmesi
 - Kullanıcının kendi rolünü yükseltememesi
 - CSV yükleme/listeleme ve bütün dosyaların birleşik analiz davranışı
+- Yetkili CSV oluşturma, en yeni/aktif sıralama, aktif işareti güncelleme, silme ve geçersiz uzantıyı reddetme
 - Bir kullanıcının diğer kullanıcının verisine erişememesi
 - Gerçek ETL dönüşümü ve yeni veri seti oluşturulması
 - Tahmin, gürültülü veri analizi ve profil üretimi

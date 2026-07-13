@@ -148,6 +148,53 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     expect(selfEscalation.status).toBe(403);
   });
 
+  it('supports the authorized dataset upload, ordering, activation and deletion lifecycle', async () => {
+    const email = 'dataset-lifecycle@enterprise.com';
+    await request(app)
+      .post('/api/register')
+      .send({ email, name: 'Dataset Lifecycle', password: 'securePassword123' });
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+
+    const invalid = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('name,value\nA,1'), 'not-csv.txt');
+    const first = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('name,value\nA,1'), 'first.csv');
+    const second = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('name,value\nB,2'), 'second.csv');
+    const listed = await request(app)
+      .get('/api/dataset/list')
+      .set('Authorization', authorization);
+
+    expect(invalid.status).toBe(400);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(listed.body.map((dataset: { filename: string }) => dataset.filename)).toEqual(['second.csv', 'first.csv']);
+
+    const activated = await request(app)
+      .put(`/api/dataset/${first.body.id}/active`)
+      .set('Authorization', authorization);
+    const deleted = await request(app)
+      .delete(`/api/dataset/${second.body.id}`)
+      .set('Authorization', authorization);
+    const remaining = await request(app)
+      .get('/api/dataset/list')
+      .set('Authorization', authorization);
+
+    expect(activated.status).toBe(200);
+    expect(deleted.status).toBe(200);
+    expect(remaining.body).toHaveLength(1);
+    expect(remaining.body[0]).toMatchObject({ id: first.body.id, filename: 'first.csv', is_active: 1 });
+  });
+
   it('atomically preserves one administrator during concurrent demotion and deletion', async () => {
     const first = 'atomic-admin-a@enterprise.com';
     const second = 'atomic-admin-b@enterprise.com';
