@@ -8,8 +8,8 @@ Bu belge proje kökündeki kanonik React/Vite + Express + SQLite uygulamasının
 - En az 2 vCPU, 4 GB RAM ve uygulama verisi için yeterli disk
 - Docker Engine ve Docker Compose v2
 - Git
-- IP üzerinden erişim için bir açık uygulama portu; domain için 80/443 ve çalışan reverse proxy
-- Domain kullanılacaksa doğru A/AAAA DNS kaydı ve geçerli TLS sertifikası
+- Kullanıcı erişimi için açık 80/443 portları ve çalışan Nginx reverse proxy
+- IP ile HTTPS kullanılacaksa IP sertifikasını destekleyen Certbot 5.4 veya üzeri; domain kullanılacaksa doğru A/AAAA DNS kaydı
 - Güvenli bir secret/parola yöneticisi
 
 Sürüm kontrolü:
@@ -47,7 +47,7 @@ chmod 600 .env
 
 | Değişken | Beklenen değer | Not |
 |---|---|---|
-| `APP_URL` | Tam kullanıcı adresi | Ör. IP kurulumunda `http://SUNUCU_IP:3000`, domain'de `https://DOMAIN` |
+| `APP_URL` | Tam HTTPS kullanıcı adresi | Bu VDS'de `https://45.133.36.77`; domain'de `https://DOMAIN` |
 | `JWT_SECRET` | En az 32 tahmin edilemez karakter | Benzersiz olmalı; değiştirilmesi tüm token'ları geçersiz kılar |
 | `DATA_ENCRYPTION_KEY` | 32 bayt base64 veya 64 hex karakter | AES-256-GCM konnektör şifreleme anahtarı; kaybı mevcut ayarları okunamaz yapar |
 | `BOOTSTRAP_ADMIN_EMAIL` | İlk admin'in normalize e-postası | Yalnızca tam eşleşen yeni kayıt admin olur |
@@ -59,10 +59,10 @@ Anahtarları güvenli parola yöneticisinde/secret vault'ta kriptografik rastgel
 
 | Değişken | Varsayılan | Kullanım |
 |---|---|---|
-| `APP_BIND_IP` | `0.0.0.0` | Doğrudan IP erişimi; reverse proxy'de `127.0.0.1` yapın |
+| `APP_BIND_IP` | `127.0.0.1` | Production reverse proxy arkasında loopback'te bırakın |
 | `APP_PORT` | `3000` | Host tarafındaki uygulama portu |
 | `ALLOWED_ORIGINS` | boş | `APP_URL` dışındaki tam origin'ler, virgülle ayrılır |
-| `TRUST_PROXY_HOPS` | `0` | Aynı hostta tek Nginx/Caddy varsa `1` |
+| `TRUST_PROXY_HOPS` | `1` | Aynı hosttaki tek Nginx için; proxy yoksa `0` yapın |
 | `JWT_ISSUER` | `reai-platform` | Token issuer; yayın sonrası sebepsiz değiştirmeyin |
 | `JWT_AUDIENCE` | `reai-web` | Token audience; yayın sonrası sebepsiz değiştirmeyin |
 
@@ -323,68 +323,68 @@ Container adları Compose sürümüne/proje adına göre değişebilir; kesin ad
 
 Docker `json-file` logları her servis için 10 MB ve en fazla 5 dosyayla sınırlandırılmıştır. Logları paylaşmadan önce token, e-posta, URL query veya müşteri verisi bulunmadığını kontrol edin.
 
-## 11. Nginx reverse proxy ve HTTPS
+## 11. Nginx, IP HTTPS ve sertifika yenileme
 
-Domain kullanılacaksa `.env` temel değerleri:
+Bu VDS, domain olmadan tarayıcıların güvendiği Let's Encrypt IP sertifikasıyla çalışır:
 
 ```dotenv
 APP_BIND_IP=127.0.0.1
 APP_PORT=3000
-APP_URL=https://DOMAIN
+APP_URL=https://45.133.36.77
 ALLOWED_ORIGINS=
 TRUST_PROXY_HOPS=1
 ```
 
-Örnek Nginx yapılandırması; `DOMAIN` ve sertifika yollarını gerçek değerlerle değiştirin:
+Canlı Nginx kaynağı [deploy/nginx/enterprise-ai-ip-https.conf](deploy/nginx/enterprise-ai-ip-https.conf), ilk sertifika alma yapılandırması ise [deploy/nginx/enterprise-ai-ip-bootstrap.conf](deploy/nginx/enterprise-ai-ip-bootstrap.conf) dosyasındadır. Kurulu yollar:
 
-```nginx
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    ''      close;
-}
-
-server {
-    listen 80;
-    listen [::]:80;
-    server_name DOMAIN;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name DOMAIN;
-
-    ssl_certificate     /PATH/TO/fullchain.pem;
-    ssl_certificate_key /PATH/TO/privkey.pem;
-
-    client_max_body_size 11m;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_connect_timeout 10s;
-        proxy_read_timeout 120s;
-        proxy_send_timeout 120s;
-    }
-}
+```text
+/etc/nginx/sites-available/enterprise-ai
+/etc/nginx/sites-enabled/enterprise-ai
+/var/www/letsencrypt/.well-known/acme-challenge/
+/etc/letsencrypt/live/45.133.36.77/fullchain.pem
+/etc/letsencrypt/live/45.133.36.77/privkey.pem
 ```
 
-Doğrulama ve güvenli reload:
+HTTP portu yalnız ACME doğrulaması ve `308` HTTPS yönlendirmesi için açıktır. Uygulama portu dış IP'de dinlemez. Beklenen dinleyiciler `22` (SSH), `80` (redirect/ACME), `443` (HTTPS) ve yalnız loopback'te `127.0.0.1:3000` şeklindedir.
+
+Let's Encrypt IP sertifikaları `shortlived` profilindedir ve 160 saat geçerlidir. Bu nedenle Ubuntu 22.04'ün eski apt Certbot paketi yerine IP/webroot desteği bulunan Certbot 5.4+ gerekir. Bu VDS'de snap Certbot 5.6.0 ve günde iki kez çalışan `snap.certbot.renew.timer` kuruludur. Güncel davranış için [Let's Encrypt duyurusu](https://letsencrypt.org/2026/03/11/shorter-certs-certbot) ve [sertifika profilleri](https://letsencrypt.org/docs/profiles/) esas alınmalıdır.
+
+Yeni bir IP için ilk staging doğrulaması:
+
+```bash
+/snap/bin/certbot certonly --staging --non-interactive --agree-tos \
+  --register-unsafely-without-email --preferred-profile shortlived \
+  --webroot --webroot-path /var/www/letsencrypt \
+  --ip-address SUNUCU_IP \
+  --config-dir /tmp/certbot-staging-config \
+  --work-dir /tmp/certbot-staging-work \
+  --logs-dir /tmp/certbot-staging-logs
+```
+
+Staging başarılı olduktan sonra production sertifikası:
+
+```bash
+/snap/bin/certbot certonly --non-interactive --agree-tos \
+  --register-unsafely-without-email --preferred-profile shortlived \
+  --webroot --webroot-path /var/www/letsencrypt \
+  --ip-address SUNUCU_IP --cert-name SUNUCU_IP
+```
+
+Yenileme sonrası [deploy/certbot-reload-nginx](deploy/certbot-reload-nginx) hook'u önce Nginx yapılandırmasını doğrular, sonra servisi reload eder. Operasyon kontrolleri:
 
 ```bash
 nginx -t
-systemctl reload nginx
-curl -fsS https://DOMAIN/api/health
+systemctl is-active nginx
+systemctl is-enabled nginx
+systemctl is-active snap.certbot.renew.timer
+systemctl list-timers --all snap.certbot.renew.timer
+/snap/bin/certbot renew --dry-run --run-deploy-hooks --no-random-sleep-on-renew
+curl -fsS https://45.133.36.77/
+curl -sS -o /dev/null -D - http://45.133.36.77/
+ss -lntp
 ```
 
-`nginx -t` başarısızsa reload yapmayın. Sertifika alınmadan sahte/self-signed production HTTPS kullanmayın. DNS ve sertifika dış bağımlılıktır.
+HTTP-01 doğrulaması ve yenileme için port 80'i tamamen kapatmayın; normal kullanıcı istekleri HTTPS'e yönlenir. `nginx -t` başarısızsa reload yapmayın. Sertifika süresi kısa olduğundan timer başarısızlığı ve yaklaşan sona erme için dış izleme/alarm kurulmalıdır. IP veya Nginx yolu değişirse önce yeni sertifikayı ve yapılandırmayı doğrulayın; çalışan sertifikayı silmeyin.
 
 ## 12. SQLite yedekleme
 
@@ -484,8 +484,11 @@ Schema uyumsuzluğu varsa yalnızca kod rollback'i yeterli olmayabilir. Veritaba
 IP üzerinden:
 
 ```bash
-curl -I http://SUNUCU_IP:3000/
-curl -fsS http://SUNUCU_IP:3000/api/health
+curl -sS -o /dev/null -D - http://SUNUCU_IP/
+curl -I https://SUNUCU_IP/
+curl -fsS https://SUNUCU_IP/api/health
+# Aşağıdaki doğrudan app portu testi bağlantıyı reddetmelidir:
+curl --max-time 3 http://SUNUCU_IP:3000/
 ```
 
 Domain üzerinden:

@@ -27,7 +27,7 @@ services:
       DB_PATH: data/reai.db
       APP_URL: ${APP_URL:-http://localhost:3000}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       JWT_SECRET: ${JWT_SECRET:-}
       JWT_ISSUER: ${JWT_ISSUER:-reai-platform}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-reai-web}
@@ -60,7 +60,7 @@ services:
       JSON_BODY_LIMIT: ${JSON_BODY_LIMIT:-1mb}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "${APP_BIND_IP:-0.0.0.0}:${APP_PORT:-3000}:3010"
+      - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-3000}:3010"
     volumes:
       - app-data:/app/data
     tmpfs:

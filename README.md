@@ -7,15 +7,15 @@ Production için kanonik uygulama proje kökündeki React/Vite arayüzü ile Exp
 ## Production mimarisi
 
 ```text
-Tarayıcı / Reverse proxy
-          |
-          | HTTP(S), varsayılan host portu 3000
-          v
-  React SPA + Express API  ---->  SQLite (/app/data/reai.db)
-          |
-          | yalnızca internal Docker ağı
-          v
-      FastAPI ML servisi
+Tarayıcı -- HTTPS :443 --> Nginx
+                              |
+                              | yalnızca 127.0.0.1:3000
+                              v
+                    React SPA + Express API  ---->  SQLite (/app/data/reai.db)
+                              |
+                              | yalnızca internal Docker ağı
+                              v
+                          FastAPI ML servisi
 ```
 
 - Web/API: Node.js 22, Express, React 19, Vite, TypeScript
@@ -99,7 +99,7 @@ unset INITIAL_ADMIN_PASSWORD
 docker compose up -d
 ```
 
-Varsayılan erişim adresi `http://SUNUCU_IP:3000`, sağlık kontrolü ise `http://SUNUCU_IP:3000/api/health` olur. Domain/HTTPS kullanılıyorsa yalnızca reverse proxy'nin dinlemesi için `APP_BIND_IP=127.0.0.1` önerilir.
+Bu VDS'deki erişim adresi `https://45.133.36.77`, sağlık kontrolü ise `https://45.133.36.77/api/health` adresidir. `http://45.133.36.77` kalıcı olarak HTTPS'e yönlenir; host portu `3000` yalnızca `127.0.0.1` üzerinde Nginx tarafından erişilebilir. Başka sunucuya kurulumda `APP_URL`, IP sertifikası ve `deploy/nginx/` altındaki yapılandırmalar o sunucunun IP/domain değerine uyarlanmalıdır.
 
 > `JWT_SECRET` eksik veya geçersizse uygulama veritabanını ve sağlık endpoint'ini çalıştırır fakat giriş güvenli biçimde devre dışı kalır; `/api/health` HTTP 503 ve `degraded` döner, app container'ı hazır/healthy sayılmaz.
 
