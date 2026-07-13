@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { 
   Activity, AlertTriangle, BarChart3, Brain, Download, 
-  FileSpreadsheet, Lightbulb, LineChart as LineIcon, PieChart, 
+  Lightbulb, LineChart as LineIcon, PieChart,
   Sparkles, Table2, TrendingUp, HelpCircle 
 } from 'lucide-react';
 import { authHeaders, getApiUrl } from '../lib/api';
@@ -44,15 +44,6 @@ interface AutoInsightResponse {
   rowCount: number;
   summary: string;
   items: Array<{ title: string; description: string; severity: 'info' | 'success' | 'warning'; score: number }>;
-}
-
-interface DatasetMeta {
-  id: number; 
-  filename: string; 
-  row_count: number; 
-  column_count: number; 
-  is_active: number; 
-  created_at: string;
 }
 
 interface MlForecast {
@@ -97,7 +88,7 @@ const formatMoney = (v: number) =>
 const formatValue = (v: number, fmt?: string) =>
   fmt === 'currency' ? formatMoney(v) : fmt === 'percent' ? `${v.toFixed(1)}%` : new Intl.NumberFormat('tr-TR').format(v);
 
-const confidenceLabel = (v?: number) => `${Math.round((v ?? 0) * 100)}% güven`;
+const confidenceLabel = (v?: number) => `${Math.round((v ?? 0) * 100)}% heuristik uyum`;
 
 // ─── Widget Components ────────────────────────────────────────────────────────
 
@@ -107,7 +98,7 @@ function WidgetShell({ widget, children, isDark }: { widget: DashboardWidget; ch
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           <h3 className="text-sm md:text-base font-bold text-slate-800 dark:text-[#F0F0F0] truncate uppercase tracking-tight">{widget.title}</h3>
-          <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-white/40 mt-1">GÜVEN SKORU: {Math.round(widget.score * 100)}</p>
+          <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-white/40 mt-1">ÖNCELİK SKORU: {Math.round(widget.score * 100)}</p>
         </div>
         {widget.confidence !== undefined && (
           <span className="shrink-0 px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-[#FFD700]/10 text-indigo-600 dark:text-[#FFD700] border border-indigo-100 dark:border-[#FFD700]/20 text-[10px] font-bold uppercase tracking-wider">
@@ -358,8 +349,6 @@ function renderWidget(widget: DashboardWidget, isDark: boolean) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const [datasets, setDatasets] = useState<DatasetMeta[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [dashboard, setDashboard] = useState<DynamicDashboardResponse>(emptyDashboard);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
   const [reportStatus, setReportStatus] = useState('');
@@ -434,20 +423,6 @@ export default function Dashboard() {
     return () => observer.disconnect();
   }, []);
 
-  // Load dataset list once
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch(getApiUrl('/api/dataset/list'), { headers: authHeaders() });
-        if (res.ok) {
-          const list: DatasetMeta[] = await res.json();
-          setDatasets(list);
-        }
-      } catch { /* ignore */ }
-    };
-    load();
-  }, []);
-
   // Load dashboard from all uploaded files.
   const loadDashboard = useCallback(async () => {
     setIsDashboardLoading(true);
@@ -482,22 +457,6 @@ export default function Dashboard() {
     loadDashboard(); 
     loadForecast();
   }, [loadDashboard, loadForecast]);
-
-  const handleSelectDataset = async (id: number) => {
-    setSelectedId(id);
-    setDatasets((prev) => prev.map((dataset) => ({ ...dataset, is_active: dataset.id === id ? 1 : 0 })));
-    setExpandedInsights({});
-    setReportStatus('');
-    try {
-      await fetch(getApiUrl(`/api/dataset/${id}/active`), {
-        method: 'POST',
-        headers: authHeaders(),
-      });
-      // reload
-      loadDashboard();
-      loadForecast();
-    } catch { /* keep local selection */ }
-  };
 
   const hasDataset = Boolean(dashboard.profile);
 
@@ -558,7 +517,7 @@ export default function Dashboard() {
             </h2>
             {dashboard.datasetFilename && (
               <p className="text-xs font-mono text-slate-400 dark:text-white/40 mt-1 truncate max-w-md">
-                Aktif Veri Seti: {dashboard.datasetFilename}
+                Birleşik analiz kapsamı: {dashboard.datasetFilename}
               </p>
             )}
           </div>
@@ -593,24 +552,6 @@ export default function Dashboard() {
               Tahmin Modeli (ML)
             </button>
           </div>
-
-          {datasets.length > 1 && (
-            <div className={cn(
-              "relative flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold uppercase border",
-              isDark ? "bg-white/5 border-white/10" : "bg-white border-slate-200 text-slate-700"
-            )}>
-              <FileSpreadsheet className="w-4 h-4 text-indigo-500 dark:text-[#FFD700] shrink-0" />
-              <select 
-                value={selectedId ?? datasets.find(d => d.is_active === 1)?.id ?? ''}
-                onChange={(e) => handleSelectDataset(Number(e.target.value))}
-                className="bg-transparent font-bold outline-none cursor-pointer pr-4"
-              >
-                {datasets.map((d) => (
-                  <option key={d.id} value={d.id} className="text-slate-800">{d.filename}</option>
-                ))}
-              </select>
-            </div>
-          )}
 
           {subTab === 'overview' && hasDataset && (
             <button
@@ -780,7 +721,7 @@ export default function Dashboard() {
             <div className="flex flex-col gap-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-5 bg-white dark:bg-white/5 rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">TUTARLILIK ORANI</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">HEURİSTİK UYUM</p>
                   <p className="text-3xl font-black text-indigo-600 dark:text-[#FFD700] mt-3">{forecastData.accuracy}%</p>
                   <p className="mt-2 text-[10px] text-slate-400 dark:text-white/40 font-mono">Geçmiş eğilime göre</p>
                 </div>
@@ -800,7 +741,7 @@ export default function Dashboard() {
                 <div className="p-5 bg-white dark:bg-white/5 rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">AYKIRI DATA</p>
                   <p className="text-3xl font-black text-cyan-600 dark:text-cyan-400 mt-3">{forecastData.anomalies.length} Adet</p>
-                  <p className="mt-2 text-[10px] text-slate-400 dark:text-white/40 font-mono">Doğruluk sapması</p>
+                  <p className="mt-2 text-[10px] text-slate-400 dark:text-white/40 font-mono">Z-score ile tespit edilen</p>
                 </div>
               </div>
 

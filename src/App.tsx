@@ -7,6 +7,7 @@ import DataImport from './views/DataImport';
 import AIChat from './views/AIChat';
 import Settings from './views/Settings';
 import EnterpriseSuite from './views/EnterpriseSuite';
+import { authHeaders, getApiUrl } from './lib/api';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -27,6 +28,8 @@ const createInitialChat = (): ChatMessage[] => [
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState('');
   const [currentView, setCurrentView] = useState<ViewState>('import'); // Default to import so user uploads data first
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(createInitialChat);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -43,8 +46,46 @@ export default function App() {
     localStorage.setItem('reai_theme', theme);
   }, [theme]);
 
+  const restoreSession = async () => {
+    const token = localStorage.getItem('reai_token');
+    if (!token) {
+      setSessionError('');
+      setIsSessionLoading(false);
+      return;
+    }
+
+    setIsSessionLoading(true);
+    setSessionError('');
+    try {
+      const response = await fetch(getApiUrl('/api/me'), { headers: authHeaders() });
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem('reai_token');
+        setUser(null);
+        return;
+      }
+      if (!response.ok) throw new Error('Oturum doğrulanamadı.');
+
+      const data = await response.json();
+      if (!data?.user?.email) {
+        localStorage.removeItem('reai_token');
+        setUser(null);
+        return;
+      }
+      setUser(data.user as User);
+    } catch {
+      setSessionError('Sunucuya ulaşılamadığı için oturum doğrulanamadı.');
+    } finally {
+      setIsSessionLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void restoreSession();
+  }, []);
+
   const handleLogin = (loggedUser: User) => {
     setUser(loggedUser);
+    setSessionError('');
     setChatMessages(createInitialChat());
     setCurrentView('import');
   };
@@ -59,6 +100,47 @@ export default function App() {
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
+
+  if (isSessionLoading) {
+    return (
+      <div className="min-h-screen bg-[#0E0E0E] text-[#F0F0F0] flex items-center justify-center px-6">
+        <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-widest text-white/60" role="status" aria-live="polite">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-[#FFD700]" />
+          Oturum doğrulanıyor...
+        </div>
+      </div>
+    );
+  }
+
+  if (!user && sessionError) {
+    return (
+      <div className="min-h-screen bg-[#0E0E0E] text-[#F0F0F0] flex items-center justify-center px-6">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
+          <h1 className="text-xl font-black uppercase tracking-tight">Oturum doğrulanamadı</h1>
+          <p className="mt-3 text-sm text-white/60">{sessionError}</p>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => void restoreSession()}
+              className="flex-1 rounded-xl bg-[#FFD700] px-4 py-3 text-xs font-bold uppercase tracking-wider text-black"
+            >
+              Tekrar Dene
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem('reai_token');
+                setSessionError('');
+              }}
+              className="flex-1 rounded-xl border border-white/15 px-4 py-3 text-xs font-bold uppercase tracking-wider text-white"
+            >
+              Giriş Ekranı
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <Login onLogin={handleLogin} />;
@@ -91,7 +173,7 @@ export default function App() {
 
   return (
     <div className={cn(
-      "flex flex-col md:flex-row h-screen overflow-hidden font-sans select-none transition-colors duration-300",
+      "flex flex-col md:flex-row h-screen overflow-hidden font-sans transition-colors duration-300",
       theme === 'dark' ? "bg-[#0E0E0E] text-[#F0F0F0]" : "bg-[#F8FAFC] text-[#0F172A]"
     )}>
       <div className="hidden md:flex shrink-0">

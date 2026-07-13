@@ -2,7 +2,18 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 import request from 'supertest';
 import { serverAppPromise } from './server';
 import { Express } from 'express';
-import { saveDataset, getLatestDataset, findUserByEmail } from './src/lib/db';
+import {
+  changeUserRole,
+  deleteUser,
+  findUserByEmail,
+  getLatestDataset,
+  LastAdminError,
+  listUsers,
+  listUserDatasets,
+  saveDataset,
+  updateUserRole
+} from './src/lib/db';
+import { buildExportPayload } from './src/server/ml/pipeline';
 
 // Mock GoogleGenAI
 vi.mock('@google/genai', () => {
@@ -71,6 +82,180 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     expect(res.body.error.code).toBe('UNAUTHORIZED');
   });
 
+  it('rejects weak registration data and protects authenticated endpoints', async () => {
+    const weak = await request(app)
+      .post('/api/register')
+      .send({ email: 'invalid', name: 'X', password: 'short' });
+    const unauthorized = await request(app).get('/api/dataset/list');
+
+    expect(weak.status).toBe(400);
+    expect(unauthorized.status).toBe(401);
+  });
+
+  it('restores a valid session through GET /api/me', async () => {
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email: 'new-user@enterprise.com', password: 'securePassword123' });
+    const me = await request(app)
+      .get('/api/me')
+      .set('Authorization', `Bearer ${login.body.token}`);
+
+    expect(me.status).toBe(200);
+    expect(me.body.user.email).toBe('new-user@enterprise.com');
+    expect(me.body.user.role).toBe('analyst');
+  });
+
+  it('enforces viewer write restrictions on the server', async () => {
+    const email = 'viewer-user@enterprise.com';
+    await request(app)
+      .post('/api/register')
+      .send({ email, name: 'Viewer User', password: 'securePassword123' });
+    await updateUserRole(email, 'viewer');
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email, password: 'securePassword123' });
+
+    const read = await request(app)
+      .get('/api/dataset/list')
+      .set('Authorization', `Bearer ${login.body.token}`);
+    const write = await request(app)
+      .delete('/api/dataset')
+      .set('Authorization', `Bearer ${login.body.token}`);
+    const selfEscalation = await request(app)
+      .put('/api/enterprise/roles')
+      .set('Authorization', `Bearer ${login.body.token}`)
+      .send({ email, role: 'admin' });
+
+    expect(read.status).toBe(200);
+    expect(write.status).toBe(403);
+    expect(selfEscalation.status).toBe(403);
+  });
+
+  it('atomically preserves one administrator during concurrent demotion and deletion', async () => {
+    const first = 'atomic-admin-a@enterprise.com';
+    const second = 'atomic-admin-b@enterprise.com';
+    await request(app).post('/api/register').send({ email: first, name: 'Admin A', password: 'securePassword123' });
+    await request(app).post('/api/register').send({ email: second, name: 'Admin B', password: 'securePassword123' });
+    await updateUserRole(first, 'admin');
+    await updateUserRole(second, 'admin');
+
+    const results = await Promise.all([
+      changeUserRole(first, 'analyst'),
+      changeUserRole(second, 'analyst')
+    ]);
+    expect(results.sort()).toEqual(['last_admin', 'updated']);
+
+    const admins = (await listUsers()).filter((user) => user.role === 'admin');
+    expect(admins).toHaveLength(1);
+    await expect(deleteUser(admins[0].email)).rejects.toBeInstanceOf(LastAdminError);
+  });
+
+  it('requires and validates a separate bootstrap token for the configured first admin email', async () => {
+    const previousEmail = process.env.BOOTSTRAP_ADMIN_EMAIL;
+    const previousToken = process.env.BOOTSTRAP_ADMIN_TOKEN;
+    const bootstrapEmail = 'bootstrap-admin@enterprise.com';
+    const bootstrapToken = 'test-only-bootstrap-token-at-least-32-characters';
+    const registration = {
+      email: bootstrapEmail,
+      name: 'Bootstrap Admin',
+      password: 'securePassword123'
+    };
+    process.env.BOOTSTRAP_ADMIN_EMAIL = bootstrapEmail;
+    delete process.env.BOOTSTRAP_ADMIN_TOKEN;
+    try {
+      const notConfigured = await request(app)
+        .post('/api/register')
+        .send(registration);
+      expect(notConfigured.status).toBe(503);
+      expect(notConfigured.body.error.code).toBe('BOOTSTRAP_NOT_CONFIGURED');
+
+      process.env.BOOTSTRAP_ADMIN_TOKEN = bootstrapToken;
+      const wrongToken = await request(app)
+        .post('/api/register')
+        .set('X-Bootstrap-Token', 'wrong-test-bootstrap-token-at-least-32-chars')
+        .send(registration);
+      expect(wrongToken.status).toBe(403);
+      expect(wrongToken.body.error.code).toBe('INVALID_BOOTSTRAP_TOKEN');
+
+      const created = await request(app)
+        .post('/api/register')
+        .set('X-Bootstrap-Token', bootstrapToken)
+        .send(registration);
+      expect(created.status).toBe(201);
+      expect((await findUserByEmail(bootstrapEmail))?.role).toBe('admin');
+    } finally {
+      if (await findUserByEmail(bootstrapEmail)) {
+        await updateUserRole(bootstrapEmail, 'analyst');
+        await deleteUser(bootstrapEmail);
+      }
+      if (previousEmail === undefined) delete process.env.BOOTSTRAP_ADMIN_EMAIL;
+      else process.env.BOOTSTRAP_ADMIN_EMAIL = previousEmail;
+      if (previousToken === undefined) delete process.env.BOOTSTRAP_ADMIN_TOKEN;
+      else process.env.BOOTSTRAP_ADMIN_TOKEN = previousToken;
+    }
+  });
+
+  it('runs ETL against the uploaded dataset instead of returning fixed rows', async () => {
+    const email = 'etl-user@enterprise.com';
+    await request(app)
+      .post('/api/register')
+      .send({ email, name: 'ETL User', password: 'securePassword123' });
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email, password: 'securePassword123' });
+    await saveDataset(email, 'source.csv', 'category,revenue\nA,10\nB,\nC,30', '', 3, 2);
+
+    const response = await request(app)
+      .post('/api/enterprise/etl/run')
+      .set('Authorization', `Bearer ${login.body.token}`)
+      .send({ operations: ['imputation', 'type_sync'] });
+
+    expect(response.status).toBe(200);
+    expect(response.body.dataset.rowCount).toBe(3);
+    expect(response.body.stats.filledCells).toBe(1);
+    const transformed = await getLatestDataset(email);
+    expect(transformed?.file_content).toContain('B,20');
+    expect(transformed?.file_content).not.toContain('DÜZELTİLDİ');
+  });
+
+  it('neutralizes spreadsheet formulas in CSV exports', () => {
+    const payload = buildExportPayload('Security report', [
+      { metric: '=HYPERLINK("https://example.test")', value: '+1+1' }
+    ]);
+    const csv = Buffer.from(payload.base64Content, 'base64').toString('utf8');
+    expect(csv).toContain("'=HYPERLINK");
+    expect(csv).toContain("'+1+1");
+  });
+
+  it('downloads real dashboard, prediction, insight and quality reports', async () => {
+    const email = 'report-user@enterprise.com';
+    await request(app)
+      .post('/api/register')
+      .send({ email, name: 'Report User', password: 'securePassword123' });
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email, password: 'securePassword123' });
+    await saveDataset(
+      email,
+      'reports.csv',
+      'date,category,revenue,cost\n2026-01-01,A,100,40\n2026-02-01,B,150,50\n2026-03-01,A,220,70\n2026-04-01,B,260,90',
+      '',
+      4,
+      4
+    );
+
+    for (const type of ['dashboard', 'prediction', 'insights', 'quality']) {
+      const response = await request(app)
+        .get(`/reports/download?type=${type}`)
+        .set('Authorization', `Bearer ${login.body.token}`);
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toContain('text/csv');
+      expect(response.headers['content-disposition']).toContain('.csv');
+      const csvLength = response.text?.length ?? response.body?.length ?? 0;
+      expect(csvLength).toBeGreaterThan(50);
+    }
+  });
+
   it('SQLite Database user isolation test', async () => {
     await saveDataset('userA@enterprise.com', 'a.csv', 'A data content', 'none', 1, 1);
     await saveDataset('userB@enterprise.com', 'b.csv', 'B data content', 'none', 1, 1);
@@ -82,6 +267,20 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     const dataB = await getLatestDataset('userB@enterprise.com');
     expect(dataB?.filename).toBe('b.csv');
     expect(dataB?.file_content).toBe('B data content');
+  });
+
+  it('serializes concurrent dataset writes without corrupting active state', async () => {
+    const email = 'concurrent-writes@enterprise.com';
+    const writes = await Promise.all(
+      Array.from({ length: 8 }, (_, index) =>
+        saveDataset(email, `parallel-${index}.csv`, `value\n${index}`, '', 1, 1)
+      )
+    );
+    const datasets = await listUserDatasets(email);
+
+    expect(new Set(writes).size).toBe(8);
+    expect(datasets).toHaveLength(8);
+    expect(datasets.filter((dataset) => dataset.is_active === 1)).toHaveLength(1);
   });
 
   it('multi-dataset endpoints analyze all uploaded files together', async () => {

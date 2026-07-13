@@ -2,21 +2,20 @@ import { authHeaders, getApiUrl } from './api';
 
 export type ReportType = 'dashboard' | 'prediction' | 'quality' | 'insights';
 
-declare global {
-  interface Window {
-    AndroidDownloader?: {
-      download: (url: string) => void;
-    };
-  }
-}
-
-export async function downloadReport(type: ReportType, datasetId?: number) {
-  const token = localStorage.getItem('reai_token') || '';
-  const datasetParam = datasetId ? `&datasetId=${encodeURIComponent(String(datasetId))}` : '';
-  const url = getApiUrl(`/reports/export/download?type=${encodeURIComponent(type)}&token=${encodeURIComponent(token)}${datasetParam}`);
+export async function downloadReport(type: ReportType) {
+  const url = getApiUrl(`/reports/download?type=${encodeURIComponent(type)}`);
 
   const response = await fetch(url, { headers: authHeaders() });
-  if (!response.ok) throw new Error('Rapor indirilemedi.');
+  if (!response.ok) {
+    let message = 'Rapor indirilemedi.';
+    try {
+      const payload = await response.json();
+      message = payload.error?.message || message;
+    } catch {
+      // The download endpoint may return a non-JSON proxy error.
+    }
+    throw new Error(message);
+  }
 
   const blob = await response.blob();
   const objectUrl = URL.createObjectURL(blob);

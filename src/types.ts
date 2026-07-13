@@ -5,7 +5,7 @@ export interface User {
   name: string;
   email: string;
   tenantId?: string;
-  role: 'admin' | 'user' | 'Admin' | 'Analyst' | 'Viewer';
+  role: 'admin' | 'analyst' | 'viewer';
 }
 
 export interface ChatMessage {

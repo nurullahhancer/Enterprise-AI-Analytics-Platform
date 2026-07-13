@@ -3,7 +3,8 @@ import { FileText, Download } from 'lucide-react';
 import { downloadReport, ReportType } from '../lib/reports';
 
 export default function Reports() {
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const reports = [
     { 
       id: 'dashboard-summary',
@@ -57,8 +58,19 @@ export default function Reports() {
   ];
 
   const createReport = async (reportConfig = reports[0]) => {
-    downloadReport(reportConfig.type);
-    setStatus(`${reportConfig.title} İndirilenler klasörüne gönderildi.`);
+    setDownloadingId(reportConfig.id);
+    setStatus(null);
+    try {
+      await downloadReport(reportConfig.type);
+      setStatus({ type: 'success', text: `${reportConfig.title} başarıyla indirildi.` });
+    } catch (error) {
+      setStatus({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Rapor indirilemedi.'
+      });
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   return (
@@ -72,8 +84,14 @@ export default function Reports() {
       </div>
 
       {status && (
-        <div className="bg-[#FFD700]/10 border border-[#FFD700]/20 text-[#FFD700] rounded-2xl px-4 py-3 text-xs font-bold uppercase tracking-widest">
-          {status}
+        <div
+          role={status.type === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+          className={status.type === 'error'
+            ? 'bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-2xl px-4 py-3 text-xs font-bold uppercase tracking-widest'
+            : 'bg-[#FFD700]/10 border border-[#FFD700]/20 text-[#FFD700] rounded-2xl px-4 py-3 text-xs font-bold uppercase tracking-widest'}
+        >
+          {status.text}
         </div>
       )}
 
@@ -99,11 +117,14 @@ export default function Reports() {
               </div>
               <button
                 onClick={() => createReport(report)}
+                disabled={downloadingId !== null}
                 className="px-3 py-2 md:px-4 md:py-2.5 text-[#FFD700] bg-[#FFD700]/10 border border-[#FFD700]/20 rounded-full transition-all shrink-0 ml-2 flex items-center gap-2 active:scale-95"
                 aria-label={`${report.title} indir`}
               >
                 <Download className="w-4 h-4 md:w-5 md:h-5" />
-                <span className="hidden sm:inline text-[10px] md:text-xs font-bold uppercase tracking-widest">{report.buttonLabel}</span>
+                <span className="hidden sm:inline text-[10px] md:text-xs font-bold uppercase tracking-widest">
+                  {downloadingId === report.id ? 'Hazırlanıyor...' : report.buttonLabel}
+                </span>
               </button>
             </div>
           ))}

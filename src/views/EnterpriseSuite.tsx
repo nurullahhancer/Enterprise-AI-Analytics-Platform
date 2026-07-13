@@ -1,11 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Database,
   GitBranch,
   FileText,
   Users,
-  Building2,
-  Cpu,
   History,
   Plus,
   Trash2,
@@ -16,8 +14,7 @@ import {
   Play,
   Shield,
   Search,
-  CheckCircle,
-  ExternalLink
+  CheckCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
@@ -28,17 +25,34 @@ interface EnterpriseSuiteProps {
   onUserUpdate: (updatedUser: User) => void;
 }
 
-export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteProps) {
-  const [activeTab, setActiveTab] = useState<'connectors' | 'etl' | 'rag' | 'rbac' | 'tenant' | 'plugins' | 'audit'>('connectors');
+const parseConnectionConfig = (config: unknown): Record<string, unknown> => {
+  if (config && typeof config === 'object') return config as Record<string, unknown>;
+  if (typeof config !== 'string') return {};
+  try {
+    const parsed = JSON.parse(config);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+};
+
+const apiErrorMessage = async (response: Response, fallback: string) => {
+  try {
+    const data = await response.json();
+    return data.error?.message || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
+  const [activeTab, setActiveTab] = useState<'connectors' | 'etl' | 'rag' | 'rbac' | 'audit'>('connectors');
   const [isDark, setIsDark] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   // States for various tabs
   const [connections, setConnections] = useState<any[]>([]);
   const [newConnName, setNewConnName] = useState('');
-  const [newConnType, setNewConnType] = useState<'sql' | 'api'>('sql');
-  const [newConnHost, setNewConnHost] = useState('');
-  const [newConnDatabase, setNewConnDatabase] = useState('');
-  const [newConnQuery, setNewConnQuery] = useState('');
   const [newConnUrl, setNewConnUrl] = useState('');
   const [isTestingConn, setIsTestingConn] = useState(false);
   const [connMessage, setConnMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -50,14 +64,9 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [auditSearch, setAuditSearch] = useState('');
 
-  const [tenants, setTenants] = useState<any[]>([]);
-  const [activeTenant, setActiveTenant] = useState('tenant-acme-123');
-
-  const [activePlugins, setActivePlugins] = useState<string[]>(['jira']);
-
   const [etlOps, setEtlOps] = useState<string[]>(['imputation', 'type_sync']);
   const [isEtlRunning, setIsEtlRunning] = useState(false);
-  const [etlMessage, setEtlMessage] = useState<string | null>(null);
+  const [etlMessage, setEtlMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -69,29 +78,31 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
   }, []);
 
   // Fetch initial data
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    setLoadError('');
     try {
       const headers = authHeaders();
-      
-      const connRes = await fetch(getApiUrl('/api/enterprise/connections'), { headers });
-      if (connRes.ok) setConnections(await connRes.json());
-      
-      const docRes = await fetch(getApiUrl('/api/enterprise/documents'), { headers });
-      if (docRes.ok) setDocuments(await docRes.json());
-
-      const logRes = await fetch(getApiUrl('/api/enterprise/audit-logs'), { headers });
-      if (logRes.ok) setAuditLogs(await logRes.json());
-
-      const tenantRes = await fetch(getApiUrl('/api/enterprise/tenants'), { headers });
-      if (tenantRes.ok) setTenants(await tenantRes.json());
+      if (activeTab === 'connectors') {
+        const response = await fetch(getApiUrl('/api/enterprise/connections'), { headers });
+        if (!response.ok) throw new Error(await apiErrorMessage(response, 'REST API bağlantıları yüklenemedi.'));
+        setConnections(await response.json());
+      } else if (activeTab === 'rag') {
+        const response = await fetch(getApiUrl('/api/enterprise/documents'), { headers });
+        if (!response.ok) throw new Error(await apiErrorMessage(response, 'Dokümanlar yüklenemedi.'));
+        setDocuments(await response.json());
+      } else if (activeTab === 'audit') {
+        const response = await fetch(getApiUrl('/api/enterprise/audit-logs'), { headers });
+        if (!response.ok) throw new Error(await apiErrorMessage(response, 'Denetim kayıtları yüklenemedi.'));
+        setAuditLogs(await response.json());
+      }
     } catch (err) {
-      console.error('Enterprise Suite fetching failed', err);
+      setLoadError(err instanceof Error ? err.message : 'Kurumsal veriler yüklenemedi.');
     }
-  };
+  }, [activeTab]);
 
   useEffect(() => {
-    fetchData();
-  }, [activeTab]);
+    void fetchData();
+  }, [fetchData]);
 
   // RBAC permissions helper
   const isViewer = user.role.toLowerCase() === 'viewer';
@@ -105,25 +116,34 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
     setIsTestingConn(true);
     setConnMessage(null);
 
-    const config = newConnType === 'sql' 
-      ? { host: newConnHost, port: 5432, database: newConnDatabase, query: newConnQuery }
-      : { url: newConnUrl, method: 'GET' };
+    let normalizedUrl: string;
+    try {
+      normalizedUrl = new URL(newConnUrl).toString();
+    } catch {
+      setConnMessage({ type: 'error', text: 'Geçerli bir HTTPS REST API adresi girin.' });
+      setIsTestingConn(false);
+      return;
+    }
+    if (!normalizedUrl.startsWith('https://')) {
+      setConnMessage({ type: 'error', text: 'REST API bağlantısı HTTPS kullanmalıdır.' });
+      setIsTestingConn(false);
+      return;
+    }
+
+    const config = { url: normalizedUrl, method: 'GET' };
 
     try {
       const res = await fetch(getApiUrl('/api/enterprise/connections'), {
         method: 'POST',
         headers: { ...jsonHeaders(), ...authHeaders() },
-        body: JSON.stringify({ name: newConnName.trim(), type: newConnType, config })
+        body: JSON.stringify({ name: newConnName.trim(), type: 'api', config })
       });
-      if (!res.ok) throw new Error('Bağlantı oluşturulamadı.');
+      if (!res.ok) throw new Error(await apiErrorMessage(res, 'Bağlantı oluşturulamadı.'));
       
       setNewConnName('');
-      setNewConnHost('');
-      setNewConnDatabase('');
-      setNewConnQuery('');
       setNewConnUrl('');
-      setConnMessage({ type: 'success', text: 'Konnektör başarıyla oluşturuldu ve test edildi!' });
-      fetchData();
+      setConnMessage({ type: 'success', text: 'REST API bağlantısı başarıyla kaydedildi.' });
+      await fetchData();
     } catch (err: any) {
       setConnMessage({ type: 'error', text: err.message });
     } finally {
@@ -134,17 +154,20 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
   const handleDeleteConnection = async (id: number) => {
     if (isViewer) return;
     try {
-      await fetch(getApiUrl(`/api/enterprise/connections/${id}`), {
+      const response = await fetch(getApiUrl(`/api/enterprise/connections/${id}`), {
         method: 'DELETE',
         headers: authHeaders()
       });
-      fetchData();
+      if (!response.ok) throw new Error(await apiErrorMessage(response, 'Bağlantı silinemedi.'));
+      setConnMessage({ type: 'success', text: 'REST API bağlantısı silindi.' });
+      await fetchData();
     } catch (err) {
-      console.error(err);
+      setConnMessage({ type: 'error', text: err instanceof Error ? err.message : 'Bağlantı silinemedi.' });
     }
   };
 
   const handleIngestConnection = async (id: number) => {
+    if (isViewer) return;
     try {
       setConnMessage({ type: 'success', text: 'Veri çekme işlemi başlatıldı, lütfen bekleyin...' });
       const res = await fetch(getApiUrl(`/api/enterprise/connections/${id}/ingest`), {
@@ -153,7 +176,7 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || 'Eşitleme başarısız.');
-      setConnMessage({ type: 'success', text: `${data.dataset.filename} başarıyla platforma aktarıldı!` });
+      setConnMessage({ type: 'success', text: `${data.dataset.filename} başarıyla platforma aktarıldı.` });
     } catch (err: any) {
       setConnMessage({ type: 'error', text: err.message });
     }
@@ -174,69 +197,40 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
     try {
       const res = await fetch(getApiUrl('/api/enterprise/documents'), {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('reai_token')}`
-        },
+        headers: authHeaders(),
         body: formData
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || 'Yükleme başarısız.');
       
-      setDocMessage({ type: 'success', text: `"${file.name}" yüklendi ve Qdrant üzerinde indekslendi.` });
-      fetchData();
+      setDocMessage({ type: 'success', text: `"${file.name}" başarıyla işlendi ve doküman havuzuna eklendi.` });
+      await fetchData();
     } catch (err: any) {
       setDocMessage({ type: 'error', text: err.message });
     } finally {
       setIsUploadingDoc(false);
+      e.currentTarget.value = '';
     }
   };
 
   const handleDeleteDoc = async (id: number) => {
     if (isViewer) return;
     try {
-      await fetch(getApiUrl(`/api/enterprise/documents/${id}`), {
+      const response = await fetch(getApiUrl(`/api/enterprise/documents/${id}`), {
         method: 'DELETE',
         headers: authHeaders()
       });
-      fetchData();
+      if (!response.ok) throw new Error(await apiErrorMessage(response, 'Doküman silinemedi.'));
+      setDocMessage({ type: 'success', text: 'Doküman havuzdan kaldırıldı.' });
+      await fetchData();
     } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // ── Role Actions (RBAC) ──────────────────────────────────────────────────
-  const handleRoleChange = async (role: string) => {
-    try {
-      const res = await fetch(getApiUrl('/api/enterprise/roles'), {
-        method: 'PUT',
-        headers: { ...jsonHeaders(), ...authHeaders() },
-        body: JSON.stringify({ role })
-      });
-      if (res.ok) {
-        onUserUpdate({ ...user, role: role as any });
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // ── Tenant Switch ────────────────────────────────────────────────────────
-  const handleTenantSwitch = async (tenantId: string) => {
-    setActiveTenant(tenantId);
-    try {
-      await fetch(getApiUrl('/api/enterprise/tenants'), {
-        method: 'POST',
-        headers: { ...jsonHeaders(), ...authHeaders() },
-        body: JSON.stringify({ tenantId, name: tenants.find(t => t.tenant_id === tenantId)?.name || 'Tenant' })
-      });
-      fetchData();
-    } catch (err) {
-      console.error(err);
+      setDocMessage({ type: 'error', text: err instanceof Error ? err.message : 'Doküman silinemedi.' });
     }
   };
 
   // ── ETL Pipeline Trigger ────────────────────────────────────────────────
   const handleRunEtl = async () => {
+    if (isViewer) return;
     setIsEtlRunning(true);
     setEtlMessage(null);
 
@@ -248,18 +242,12 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || 'ETL başarısız.');
-      setEtlMessage(`Pipeline Başarılı! Temizlenmiş veri seti aktif edildi: ${data.dataset.filename}`);
+      setEtlMessage({ type: 'success', text: `Pipeline tamamlandı. İşlenen veri seti: ${data.dataset.filename}` });
     } catch (err: any) {
-      setEtlMessage(`Hata: ${err.message}`);
+      setEtlMessage({ type: 'error', text: err.message || 'ETL işlemi tamamlanamadı.' });
     } finally {
       setIsEtlRunning(false);
     }
-  };
-
-  const togglePlugin = (plugin: string) => {
-    setActivePlugins(prev => 
-      prev.includes(plugin) ? prev.filter(p => p !== plugin) : [...prev, plugin]
-    );
   };
 
   // Tabs layout navigation items
@@ -267,9 +255,7 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
     { id: 'connectors', label: 'Veri Bağlantıları', icon: Database },
     { id: 'etl', label: 'ETL İş Akışı', icon: GitBranch },
     { id: 'rag', label: 'RAG & PDF Havuzu', icon: FileText },
-    { id: 'rbac', label: 'Rol Yetkileri (RBAC)', icon: Users },
-    { id: 'tenant', label: 'Kiracılar (Tenants)', icon: Building2 },
-    { id: 'plugins', label: 'Eklentiler SDK', icon: Cpu },
+    { id: 'rbac', label: 'Rol ve Yetkiler', icon: Users },
     { id: 'audit', label: 'Denetim Günlüğü', icon: History }
   ] as const;
 
@@ -287,17 +273,6 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
           </p>
         </div>
 
-        {/* Current Active Space */}
-        <div className={cn(
-          "px-4 py-2 rounded-xl border text-xs font-bold flex items-center gap-3",
-          isDark ? "bg-white/5 border-white/10" : "bg-white border-slate-200"
-        )}>
-          <Building2 className="w-4 h-4 text-emerald-500" />
-          <div>
-            <span className="opacity-50">Aktif Organizasyon:</span>{' '}
-            <span className="text-[#FFD700]">{tenants.find(t => t.tenant_id === activeTenant)?.name || 'Yükleniyor...'}</span>
-          </div>
-        </div>
       </div>
 
       {/* Main Grid: Left Tabs / Right Content */}
@@ -362,72 +337,14 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                           "w-full px-4 py-3 rounded-xl border text-xs focus:outline-none",
                           isDark ? "bg-[#1A1A1A] border-white/10 text-white focus:border-[#FFD700]" : "bg-slate-50 border-slate-200 text-slate-800 focus:border-[#4F46E5]"
                         )}
-                        placeholder="Örn: PostgreSQL Satış Veritabanı"
+                        placeholder="Örn: Satış REST API"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Bağlantı Tipi</label>
-                      <select
-                        value={newConnType}
-                        onChange={(e: any) => setNewConnType(e.target.value)}
-                        className={cn(
-                          "w-full px-4 py-3 rounded-xl border text-xs focus:outline-none",
-                          isDark ? "bg-[#1A1A1A] border-white/10 text-white" : "bg-slate-50 border-slate-200 text-slate-800"
-                        )}
-                      >
-                        <option value="sql">SQL Veritabanı (PostgreSQL / SQL Server)</option>
-                        <option value="api">Dinamik REST API Entegrasyonu</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {newConnType === 'sql' ? (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Sunucu Adresi (Host)</label>
-                        <input
-                          type="text"
-                          value={newConnHost}
-                          onChange={(e) => setNewConnHost(e.target.value)}
-                          className={cn(
-                            "w-full px-4 py-3 rounded-xl border text-xs focus:outline-none",
-                            isDark ? "bg-[#1A1A1A] border-white/10 text-white" : "bg-slate-50 border-slate-200 text-slate-800"
-                          )}
-                          placeholder="localhost veya IP"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Veritabanı İsmi</label>
-                        <input
-                          type="text"
-                          value={newConnDatabase}
-                          onChange={(e) => setNewConnDatabase(e.target.value)}
-                          className={cn(
-                            "w-full px-4 py-3 rounded-xl border text-xs focus:outline-none",
-                            isDark ? "bg-[#1A1A1A] border-white/10 text-white" : "bg-slate-50 border-slate-200 text-slate-800"
-                          )}
-                          placeholder="enterprise_db"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">SQL Sorgusu (Query)</label>
-                        <input
-                          type="text"
-                          value={newConnQuery}
-                          onChange={(e) => setNewConnQuery(e.target.value)}
-                          className={cn(
-                            "w-full px-4 py-3 rounded-xl border text-xs focus:outline-none",
-                            isDark ? "bg-[#1A1A1A] border-white/10 text-white" : "bg-slate-50 border-slate-200 text-slate-800"
-                          )}
-                          placeholder="SELECT * FROM sales"
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">REST API Endpoint URL</label>
+                      <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">HTTPS REST API Endpoint</label>
                       <input
                         type="url"
+                        required
                         value={newConnUrl}
                         onChange={(e) => setNewConnUrl(e.target.value)}
                         className={cn(
@@ -437,7 +354,7 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                         placeholder="https://api.sirket.com/v1/veri"
                       />
                     </div>
-                  )}
+                  </div>
 
                   {connMessage && (
                     <div className={cn(
@@ -463,7 +380,7 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                     )}
                   >
                     <Plus className="w-4 h-4" />
-                    {isTestingConn ? 'Test Ediliyor...' : 'Bağlantıyı Eşitle & Kaydet'}
+                    {isTestingConn ? 'Kaydediliyor...' : 'REST Bağlantısını Kaydet'}
                   </button>
                 </form>
               </div>
@@ -473,7 +390,7 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                 <h4 className="text-sm font-bold uppercase tracking-widest opacity-60">Tanımlı Veri Konnektörleri</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {connections.map((conn) => {
-                    const cfg = JSON.parse(conn.config);
+                    const cfg = parseConnectionConfig(conn.config);
                     return (
                       <div
                         key={conn.id}
@@ -486,27 +403,27 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                           <div className="flex items-center justify-between mb-3">
                             <span className={cn(
                               "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider",
-                              conn.type === 'sql' 
-                                ? (isDark ? "bg-indigo-500/10 text-indigo-400" : "bg-indigo-50 text-indigo-600")
-                                : (isDark ? "bg-sky-500/10 text-sky-400" : "bg-sky-50 text-sky-600")
+                              isDark ? "bg-sky-500/10 text-sky-400" : "bg-sky-50 text-sky-600"
                             )}>
-                              {conn.type === 'sql' ? 'SQL Database' : 'REST API'}
+                              REST API
                             </span>
                             <span className="text-[10px] opacity-40">ID: {conn.id}</span>
                           </div>
                           
                           <h5 className="font-bold text-sm">{conn.name}</h5>
                           <p className="text-[10px] opacity-50 mt-1 truncate">
-                            {conn.type === 'sql' ? `Veritabanı: ${cfg.database} | SQL: ${cfg.query}` : `Endpoint: ${cfg.url}`}
+                            Endpoint: {String(cfg.url || 'Yapılandırma kullanılamıyor')}
                           </p>
                         </div>
 
                         <div className="flex items-center justify-between border-t border-dashed border-white/10 pt-4 mt-4">
                           <button
+                            disabled={isViewer || conn.encryptionStatus !== 'encrypted'}
                             onClick={() => handleIngestConnection(conn.id)}
                             className={cn(
                               "flex items-center gap-2 px-3.5 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all",
-                              isDark ? "bg-white/5 hover:bg-white/10 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                              isDark ? "bg-white/5 hover:bg-white/10 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700",
+                              (isViewer || conn.encryptionStatus !== 'encrypted') && "opacity-40 cursor-not-allowed"
                             )}
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
@@ -613,9 +530,11 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                     </div>
                   ) : etlMessage ? (
                     <div className="space-y-3">
-                      <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto" />
-                      <p className="text-xs font-bold text-emerald-500">{etlMessage}</p>
-                      <p className="text-[10px] opacity-50">Veri kalitesi %98 seviyesine optimize edildi. Analiz Paneli yeni verilerle güncellendi.</p>
+                      {etlMessage.type === 'success'
+                        ? <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto" />
+                        : <AlertTriangle className="w-12 h-12 text-rose-500 mx-auto" />}
+                      <p className={cn("text-xs font-bold", etlMessage.type === 'success' ? "text-emerald-500" : "text-rose-500")}>{etlMessage.text}</p>
+                      <p className="text-[10px] opacity-50">Sonuçlar yalnızca tamamlanan dönüşüm adımlarına dayanır; kaynak veri setleri korunur.</p>
                     </div>
                   ) : (
                     <div className="space-y-4 max-w-xs">
@@ -642,10 +561,10 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
               )}>
                 <h3 className="text-lg font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
                   <FileText className="w-5 h-5 text-indigo-500" />
-                  RAG Doküman Yükleme Arayüzü (Vector DB)
+                  Doküman Destekli Arama Havuzu
                 </h3>
                 <p className="text-xs opacity-60 mb-6">
-                  PDF veya TXT formatındaki kurumsal belgeleri yükleyin. Belgeler otomatik olarak semantik parçalara (chunks) ayrılacak ve Qdrant üzerinde vektör indekslemesi yapılacaktır.
+                  PDF veya TXT kurumsal belgeleri yükleyin. Belgeler yerel olarak metin parçalarına ayrılır; ilgili parçalar AI sorgularında bağlam olarak seçilir.
                 </p>
 
                 {/* Upload drag-drop area */}
@@ -718,11 +637,11 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                             <td className="py-4 px-6">
                               <span className={cn(
                                 "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider",
-                                doc.status === 'indexed' 
+                                doc.status === 'indexed' || doc.status === 'ready'
                                   ? (isDark ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-600")
                                   : "bg-amber-500/10 text-amber-400"
                               )}>
-                                {doc.status === 'indexed' ? 'Vektör İndekslendi' : 'İndeksleniyor'}
+                                {doc.status === 'indexed' || doc.status === 'ready' ? 'Aramaya Hazır' : 'İşleniyor'}
                               </span>
                             </td>
                             <td className="py-4 px-6 opacity-60">
@@ -769,7 +688,7 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                   Granular Rol Bazlı Erişim Yetkileri (RBAC)
                 </h3>
                 <p className="text-xs opacity-60 mt-1">
-                  Rol değiştirerek UI ve API seviyesindeki erişim kısıtlamalarını test edebilirsiniz.
+                  Rolünüz sunucu tarafında uygulanır. Rol değişikliklerini yalnızca yetkili yönetici API üzerinden yapabilir.
                 </p>
               </div>
 
@@ -779,11 +698,10 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                   { role: 'analyst', label: 'Analyst', desc: 'Veri Analiz Yetkisi: Veri ekleyebilir ve inceleyebilir, ancak konnektörleri silemez.' },
                   { role: 'viewer', label: 'Viewer (Sınırlı)', desc: 'Salt Okunur Yetki: Veri setlerini inceleyebilir, ancak hiçbir silme/ekleme operasyonu yapamaz.' }
                 ].map(r => (
-                  <button
+                  <div
                     key={r.role}
-                    onClick={() => handleRoleChange(r.role)}
                     className={cn(
-                      "p-5 rounded-2xl border text-left flex flex-col justify-between transition-all",
+                      "p-5 rounded-2xl border text-left flex flex-col justify-between",
                       user.role.toLowerCase() === r.role 
                         ? (isDark ? "bg-[#FFD700]/5 border-[#FFD700] text-white" : "bg-indigo-50/50 border-[#4F46E5] text-slate-800")
                         : (isDark ? "bg-white/5 border-white/5 hover:bg-white/10" : "bg-slate-50 border-slate-100 hover:bg-slate-100/50")
@@ -797,123 +715,8 @@ export default function EnterpriseSuite({ user, onUserUpdate }: EnterpriseSuiteP
                       <p className="text-[10px] opacity-50 leading-relaxed">{r.desc}</p>
                     </div>
                     <span className="text-[10px] font-bold uppercase tracking-widest mt-6 opacity-60">
-                      {user.role.toLowerCase() === r.role ? 'Aktif Rol' : 'Seç'}
+                      {user.role.toLowerCase() === r.role ? 'Aktif Rol' : 'Yönetici Tarafından Atanabilir'}
                     </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 5. COKLU KIRACI (TENANT) */}
-          {activeTab === 'tenant' && (
-            <div className={cn(
-              "p-6 rounded-2xl border transition-colors shadow-sm space-y-6",
-              isDark ? "bg-[#151515] border-white/5" : "bg-white border-slate-200"
-            )}>
-              <div>
-                <h3 className="text-lg font-bold uppercase tracking-wider flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-indigo-500" />
-                  SaaS Çoklu Kiracı (Multi-Tenant) Yönetimi
-                </h3>
-                <p className="text-xs opacity-60 mt-1">
-                  Şirketler veya departmanlar arasında mantıksal veri izolasyonu sağlayarak izolasyon uzayları tanımlayın.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <h4 className="text-sm font-bold uppercase tracking-widest opacity-60">Organizasyon Değiştir</h4>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {tenants.map((tenant) => (
-                    <button
-                      key={tenant.id}
-                      onClick={() => handleTenantSwitch(tenant.tenant_id)}
-                      className={cn(
-                        "p-5 rounded-2xl border text-left flex items-start gap-4 transition-all",
-                        activeTenant === tenant.tenant_id
-                          ? (isDark ? "bg-white/10 border-[#FFD700]" : "bg-indigo-50 border-[#4F46E5]")
-                          : (isDark ? "bg-white/5 border-white/5 hover:bg-white/10" : "bg-slate-50 border-slate-100 hover:bg-slate-100")
-                      )}
-                    >
-                      <Building2 className="w-6 h-6 text-indigo-500 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-bold">{tenant.name}</p>
-                        <p className="text-[10px] opacity-40 uppercase tracking-tighter mt-1">Tenant ID: {tenant.tenant_id}</p>
-                        <p className="text-[10px] opacity-40 mt-0.5">Sanal İzolasyon: AKTİF</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 6. EKLENTI SDK (PLUGINS) */}
-          {activeTab === 'plugins' && (
-            <div className={cn(
-              "p-6 rounded-2xl border transition-colors shadow-sm space-y-6",
-              isDark ? "bg-[#151515] border-white/5" : "bg-white border-slate-200"
-            )}>
-              <div>
-                <h3 className="text-lg font-bold uppercase tracking-wider flex items-center gap-2">
-                  <Cpu className="w-5 h-5 text-indigo-500" />
-                  Harici Sistem Eklenti Havuzu (Plugin SDK)
-                </h3>
-                <p className="text-xs opacity-60 mt-1">
-                  SAP, Salesforce, Jira ve HubSpot gibi harici sistemlerden veri çekebilmek için eklenti entegrasyonlarını etkinleştirin.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[
-                  { id: 'sap', name: 'SAP ERP Integration', desc: 'Finansal defter ve fatura verilerini sisteme aktarır.', version: 'v3.2.1' },
-                  { id: 'salesforce', name: 'Salesforce CRM Connector', desc: 'Müşteri profili ve dönüşüm hunisi verilerini çeker.', version: 'v2.1.0' },
-                  { id: 'jira', name: 'Jira Software SDK', desc: 'Proje sprint ve iş listesi performans metriklerini alır.', version: 'v4.0.5' },
-                  { id: 'hubspot', name: 'HubSpot Marketing API', desc: 'Pazarlama kampanyası verilerini entegre eder.', version: 'v1.6.0' }
-                ].map(p => (
-                  <div
-                    key={p.id}
-                    className={cn(
-                      "p-5 rounded-2xl border flex flex-col justify-between transition-colors shadow-sm",
-                      isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100"
-                    )}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-[10px] font-bold opacity-40">{p.version}</span>
-                        <div className="flex items-center gap-1.5">
-                          <div className={cn(
-                            "w-2.5 h-2.5 rounded-full",
-                            activePlugins.includes(p.id) ? "bg-emerald-500" : "bg-slate-500"
-                          )} />
-                          <span className="text-[10px] font-bold opacity-60">
-                            {activePlugins.includes(p.id) ? 'Etkin' : 'Pasif'}
-                          </span>
-                        </div>
-                      </div>
-                      <h5 className="font-bold text-sm">{p.name}</h5>
-                      <p className="text-[10px] opacity-50 mt-1">{p.desc}</p>
-                    </div>
-
-                    <div className="flex items-center justify-between mt-6 pt-4 border-t border-white/5">
-                      <button
-                        onClick={() => togglePlugin(p.id)}
-                        className={cn(
-                          "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all",
-                          activePlugins.includes(p.id)
-                            ? "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"
-                            : (isDark ? "bg-[#FFD700] text-black hover:bg-[#FFE57F]" : "bg-[#4F46E5] text-white hover:bg-[#4338CA]")
-                        )}
-                      >
-                        {activePlugins.includes(p.id) ? 'Devre Dışı Bırak' : 'Eklentiyi Etkinleştir'}
-                      </button>
-
-                      <a href="#" className="text-[10px] opacity-40 hover:opacity-100 flex items-center gap-1">
-                        SDK Dokümantasyonu
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
                   </div>
                 ))}
               </div>

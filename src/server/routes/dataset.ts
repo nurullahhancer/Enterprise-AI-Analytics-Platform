@@ -1,13 +1,13 @@
 import { Router, Response, NextFunction } from 'express';
 import multer from 'multer';
-import * as xlsx from 'xlsx';
-import { AuthenticatedRequest } from '../index';
+import { AuthenticatedRequest, requireRoles } from '../index';
 import {
   deleteActiveDataset,
   deleteDataset,
   listUserDatasets,
   saveUserDataset,
-  setActiveDataset
+  setActiveDataset,
+  StorageQuotaError
 } from '../../lib/db';
 import { getCombinedUserDataset } from '../datasets/combined';
 import { parseCsv } from '../ml/parser';
@@ -18,23 +18,19 @@ const router = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, cb) => {
     const lowerName = file.originalname.toLowerCase();
-    const ok = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || lowerName.endsWith('.csv');
-    ok ? cb(null, true) : cb(new Error('Sadece CSV veya Excel dosyası yüklenebilir.'));
+    lowerName.endsWith('.csv') ? cb(null, true) : cb(new Error('Güvenli aktarım için yalnızca CSV dosyası yüklenebilir.'));
   }
 });
 
 const uploadMiddleware = upload.single('file');
 
 async function parseUploadedFile(file: Express.Multer.File): Promise<string> {
-  if (file.originalname.toLowerCase().endsWith('.xlsx') || file.originalname.toLowerCase().endsWith('.xls')) {
-    const workbook = xlsx.read(file.buffer, { type: 'buffer' });
-    return xlsx.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
-  }
-
-  return file.buffer.toString('utf-8');
+  const content = file.buffer.toString('utf-8').replace(/^\uFEFF/, '');
+  if (content.includes('\0')) throw new Error('Geçersiz ikili dosya içeriği.');
+  return content;
 }
 
 function metadataFromContent(content: string) {
@@ -53,27 +49,32 @@ function uploadHandler(req: AuthenticatedRequest, res: Response, _next: NextFunc
     const email = req.user!.email;
 
     try {
-      let content = await parseUploadedFile(req.file);
-      const maxChars = Number(process.env.MAX_DATASET_CONTEXT_CHARS || 300_000);
-      let warning = '';
+      const content = await parseUploadedFile(req.file);
+      const maxChars = Math.min(Number(process.env.MAX_DATASET_STORAGE_CHARS || 5_000_000), 10_000_000);
       if (content.length > maxChars) {
-        content = content.substring(0, maxChars);
-        warning = `Dosya ${maxChars.toLocaleString('tr-TR')} karaktere kırpıldı.`;
+        return res.status(413).json({ error: { code: 'DATASET_TOO_LARGE', message: `CSV içeriği en fazla ${maxChars.toLocaleString('tr-TR')} karakter olabilir.` } });
       }
 
       const { rowCount, columnCount } = metadataFromContent(content);
-      const id = await saveUserDataset(email, req.file.originalname, content, warning, rowCount, columnCount);
+      if (rowCount < 1 || columnCount < 1) {
+        return res.status(400).json({ error: { code: 'EMPTY_DATASET', message: 'CSV başlık ve en az bir veri satırı içermelidir.' } });
+      }
+      const safeFilename = req.file.originalname.replace(/[\r\n\0]/g, '').slice(0, 200);
+      const id = await saveUserDataset(email, safeFilename, content, '', rowCount, columnCount);
 
-      logger.info(`Dataset yüklendi id=${id} kullanıcı=${email} dosya=${req.file.originalname}`);
+      logger.info('Dataset yüklendi.', { id, rowCount, columnCount });
       res.json({
         id,
-        filename: req.file.originalname,
+        filename: safeFilename,
         rowCount,
         columnCount,
-        warning,
+        warning: '',
         is_active: 1
       });
     } catch (e: any) {
+      if (e instanceof StorageQuotaError) {
+        return res.status(413).json({ error: { code: e.code, message: e.message } });
+      }
       logger.error(`Dosya işleme hatası: ${e.message}`);
       res.status(500).json({ error: { code: 'PARSE_ERROR', message: 'Dosya okunamadı.' } });
     }
@@ -132,7 +133,7 @@ async function deleteByIdHandler(req: AuthenticatedRequest, res: Response, next:
     const deleted = await deleteDataset(req.user!.email, id);
     if (!deleted) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Dataset bulunamadı.' } });
 
-    logger.info(`Dataset silindi id=${id} kullanıcı=${req.user!.email}`);
+    logger.info('Dataset silindi.', { id });
     res.json({ message: 'Dataset silindi.' });
   } catch (err) {
     next(err);
@@ -149,23 +150,23 @@ async function deleteActiveHandler(req: AuthenticatedRequest, res: Response, nex
   }
 }
 
-router.post('/upload', uploadHandler);
-router.post('/dataset/upload', uploadHandler);
-router.post('/datasets/upload', uploadHandler);
+router.post('/upload', requireRoles('admin', 'analyst'), uploadHandler);
+router.post('/dataset/upload', requireRoles('admin', 'analyst'), uploadHandler);
+router.post('/datasets/upload', requireRoles('admin', 'analyst'), uploadHandler);
 
 router.get('/dataset/list', listHandler);
 router.get('/datasets', listHandler);
 
 router.get('/dataset/summary', summaryHandler);
 
-router.delete('/dataset', deleteActiveHandler);
+router.delete('/dataset', requireRoles('admin', 'analyst'), deleteActiveHandler);
 
-router.post('/dataset/:id/active', activateHandler);
-router.put('/dataset/:id/active', activateHandler);
-router.post('/datasets/:id/active', activateHandler);
-router.put('/datasets/:id/active', activateHandler);
+router.post('/dataset/:id/active', requireRoles('admin', 'analyst'), activateHandler);
+router.put('/dataset/:id/active', requireRoles('admin', 'analyst'), activateHandler);
+router.post('/datasets/:id/active', requireRoles('admin', 'analyst'), activateHandler);
+router.put('/datasets/:id/active', requireRoles('admin', 'analyst'), activateHandler);
 
-router.delete('/dataset/:id', deleteByIdHandler);
-router.delete('/datasets/:id', deleteByIdHandler);
+router.delete('/dataset/:id', requireRoles('admin', 'analyst'), deleteByIdHandler);
+router.delete('/datasets/:id', requireRoles('admin', 'analyst'), deleteByIdHandler);
 
 export { router as datasetRouter };

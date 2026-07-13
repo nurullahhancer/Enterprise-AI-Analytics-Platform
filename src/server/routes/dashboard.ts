@@ -16,7 +16,7 @@ async function dynamicHandler(req: AuthenticatedRequest, res: Response, next: Ne
     const dataset = await getCombinedUserDataset(req.user!.email);
     if (!dataset) {
       return res.json({
-        emptyState: 'Veri arttıkça burada içgörüler görünecek. Başlamak için CSV veya Excel dosyası yükleyin.',
+        emptyState: 'Veri arttıkça burada içgörüler görünecek. Başlamak için CSV dosyası yükleyin.',
         profile: null,
         widgets: []
       });

@@ -65,7 +65,7 @@ export default function Predictions() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
         <div className="p-4 md:p-6 bg-white/5 rounded-2xl border border-white/5">
           <div className="flex justify-between mb-2 md:mb-4">
-            <div className="text-[8px] md:text-[10px] uppercase tracking-[0.3em] opacity-40">Tahmin Güveni</div>
+            <div className="text-[8px] md:text-[10px] uppercase tracking-[0.3em] opacity-40">Heuristik Uyum Skoru</div>
             <div className="px-1.5 py-0.5 bg-indigo-500/20 text-indigo-400 text-[8px] md:text-[10px] font-black uppercase border border-indigo-500/30 rounded-sm">TREND</div>
           </div>
           <p className="text-3xl md:text-5xl font-black tracking-tighter text-[#FFD700]">{forecast.accuracy}%</p>

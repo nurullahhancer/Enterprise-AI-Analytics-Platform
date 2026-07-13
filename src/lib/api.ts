@@ -1,19 +1,14 @@
 const trimSlash = (value: string) => value.replace(/\/+$/, '');
 
-const tunnelHeaders = (): HeadersInit => ({
-  'ngrok-skip-browser-warning': 'true'
-});
-
 export const getApiBaseUrl = (): string => {
-  const userAgent = navigator.userAgent.toLowerCase();
-  if (userAgent.includes('android')) return 'http://10.0.2.2:3010';
-
-  if (typeof window !== 'undefined' && window.location.origin) {
-    return trimSlash(window.location.origin);
-  }
-
-  const configured = import.meta.env.VITE_API_BASE_URL;
+  const configured = import.meta.env.VITE_API_BASE_URL?.trim();
   if (configured) return trimSlash(configured);
+
+  if (typeof window !== 'undefined') {
+    if (window.location.origin && window.location.origin !== 'null') {
+      return trimSlash(window.location.origin);
+    }
+  }
 
   return 'http://localhost:3010';
 };
@@ -24,11 +19,10 @@ export const getApiUrl = (path: string): string => {
 };
 
 export const authHeaders = (): HeadersInit => {
-  const token = localStorage.getItem('reai_token');
-  return token ? { ...tunnelHeaders(), Authorization: `Bearer ${token}` } : tunnelHeaders();
+  const token = typeof localStorage === 'undefined' ? null : localStorage.getItem('reai_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 export const jsonHeaders = (): HeadersInit => ({
-  ...tunnelHeaders(),
   'Content-Type': 'application/json'
 });

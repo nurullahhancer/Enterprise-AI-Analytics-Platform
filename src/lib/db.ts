@@ -1,27 +1,58 @@
 import sqlite3 from 'sqlite3';
+import fs from 'node:fs';
 import path from 'path';
-import crypto from 'crypto';
 import logger from './logger';
 
-const dbPath = path.resolve(process.cwd(), 'reai.db');
+const configuredDbPath = process.env.DB_PATH || (process.env.NODE_ENV === 'test' ? ':memory:' : 'data/reai.db');
+const dbPath = configuredDbPath === ':memory:' ? configuredDbPath : path.resolve(process.cwd(), configuredDbPath);
 const DATASET_TABLE = 'user_datasets_v2';
+
+if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o750 });
 
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     logger.error('SQLite connection error:', err);
   } else {
-    logger.info('Connected to SQLite database: reai.db');
+    logger.info('SQLite database connection established.');
   }
 });
 
 type RunInfo = { lastID: number; changes: number };
 
-function run(sql: string, params: unknown[] = []): Promise<RunInfo> {
+function runDirect(sql: string, params: unknown[] = []): Promise<RunInfo> {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (this: sqlite3.RunResult, err) {
       if (err) reject(err);
       else resolve({ lastID: this.lastID, changes: this.changes });
     });
+  });
+}
+
+let writeQueue: Promise<void> = Promise.resolve();
+
+function serializeWrite<T>(work: () => Promise<T>): Promise<T> {
+  const result = writeQueue.then(work);
+  writeQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+function run(sql: string, params: unknown[] = []): Promise<RunInfo> {
+  return serializeWrite(() => runDirect(sql, params));
+}
+
+function withTransaction<T>(work: () => Promise<T>): Promise<T> {
+  return serializeWrite(async () => {
+    let transactionStarted = false;
+    try {
+      await runDirect('BEGIN IMMEDIATE');
+      transactionStarted = true;
+      const result = await work();
+      await runDirect('COMMIT');
+      return result;
+    } catch (err) {
+      if (transactionStarted) await runDirect('ROLLBACK').catch(() => undefined);
+      throw err;
+    }
   });
 }
 
@@ -44,12 +75,18 @@ function all<T>(sql: string, params: unknown[] = []): Promise<T[]> {
 }
 
 db.serialize(() => {
+  db.run('PRAGMA foreign_keys = ON');
+  db.run('PRAGMA busy_timeout = 5000');
+  if (configuredDbPath !== ':memory:') db.run('PRAGMA journal_mode = WAL');
+
   db.run(
     `
     CREATE TABLE IF NOT EXISTS users (
       email TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'analyst' CHECK (role IN ('admin', 'analyst', 'viewer')),
+      token_version INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
@@ -58,20 +95,6 @@ db.serialize(() => {
         logger.error('Failed to create users table:', err);
       } else {
         logger.info('users table ready.');
-        
-        // Seed default user 'a' with password 'a'
-        const salt = '1234567890abcdef';
-        const hash = crypto.pbkdf2Sync('a', salt, 1000, 64, 'sha512').toString('hex');
-        const storedHash = `${salt}:${hash}`;
-        
-        db.run(
-          `INSERT OR IGNORE INTO users (email, name, password_hash) VALUES (?, ?, ?)`,
-          ['a', 'a', storedHash],
-          (seedErr) => {
-            if (seedErr) logger.error('Failed to seed default user:', seedErr);
-            else logger.info('Default user seeded: a / a');
-          }
-        );
       }
     }
   );
@@ -158,8 +181,9 @@ db.serialize(() => {
     }
   );
 
-  // Enterprise additions
-  db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'admin'`, () => {});
+  // Idempotent compatibility migrations for databases created by older builds.
+  db.run(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'analyst'`, () => {});
+  db.run(`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0`, () => {});
 
   db.run(`
     CREATE TABLE IF NOT EXISTS user_connections (
@@ -216,25 +240,16 @@ db.serialize(() => {
     )
   `);
 
-  // Seed default connections, audit logs, and organizations if empty
-  db.get("SELECT count(*) as count FROM organizations", (err, row: any) => {
-    if (!err && row && row.count === 0) {
-      db.run("INSERT INTO organizations (email, name, tenant_id) VALUES (?, ?, ?)", ['a', 'Acme Corp', 'tenant-acme-123']);
-      db.run("INSERT INTO organizations (email, name, tenant_id) VALUES (?, ?, ?)", ['a', 'Global Tech Inc', 'tenant-global-456']);
-      
-      db.run("INSERT INTO audit_logs (email, action, details) VALUES (?, ?, ?)", ['a', 'User Login', 'Kullanıcı sisteme giriş yaptı']);
-      db.run("INSERT INTO audit_logs (email, action, details) VALUES (?, ?, ?)", ['a', 'Tenant Switched', 'Acme Corp organizasyonuna geçiş yapıldı']);
-      
-      db.run("INSERT INTO user_notifications (email, title, message) VALUES (?, ?, ?)", ['a', 'Sistem Hazır', 'ReAI Kurumsal Suite platformu kullanıma hazır.']);
-      db.run("INSERT INTO user_notifications (email, title, message) VALUES (?, ?, ?)", ['a', 'Veri Kaynağı Eşitleme', 'Varsayılan SQL konnektör eşitlemesi tamamlandı.']);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_datasets_email ON ${DATASET_TABLE}(email)`);
+  db.run('CREATE INDEX IF NOT EXISTS idx_connections_email ON user_connections(email)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_documents_email ON user_documents(email)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_audit_email_created ON audit_logs(email, created_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_notifications_email_created ON user_notifications(email, created_at)');
+});
 
-      db.run("INSERT INTO user_connections (email, type, name, config) VALUES (?, ?, ?, ?)", [
-        'a', 'sql', 'PostgreSQL Müşteri Veritabanı', JSON.stringify({ host: '127.0.0.1', port: 5432, database: 'enterprise_ai', username: 'enterprise', query: 'SELECT * FROM users LIMIT 100' })
-      ]);
-      db.run("INSERT INTO user_connections (email, type, name, config) VALUES (?, ?, ?, ?)", [
-        'a', 'api', 'Hava Durumu REST API', JSON.stringify({ url: 'https://api.weatherapi.com/v1/forecast.json', method: 'GET', headers: '{"Authorization": "Bearer token"}' })
-      ]);
-    }
+export const databaseReady = new Promise<void>((resolve, reject) => {
+  db.serialize(() => {
+    db.get('SELECT 1', (err) => err ? reject(err) : resolve());
   });
 });
 
@@ -242,6 +257,8 @@ export interface DbUser {
   email: string;
   name: string;
   password_hash: string;
+  role: 'admin' | 'analyst' | 'viewer';
+  token_version: number;
   created_at: string;
 }
 
@@ -270,21 +287,48 @@ export interface DatasetMeta {
   updated_at: string;
 }
 
-export function createUser(email: string, name: string, passwordHash: string): Promise<void> {
+export class StorageQuotaError extends Error {
+  code: 'DATASET_QUOTA_EXCEEDED' | 'DOCUMENT_QUOTA_EXCEEDED';
+
+  constructor(code: StorageQuotaError['code'], message: string) {
+    super(message);
+    this.name = 'StorageQuotaError';
+    this.code = code;
+  }
+}
+
+export class LastAdminError extends Error {
+  constructor() {
+    super('Son yönetici rolü düşürülemez veya hesabı silinemez.');
+    this.name = 'LastAdminError';
+  }
+}
+
+function boundedEnvInt(name: string, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(process.env[name] || fallback);
+  return Number.isInteger(parsed) ? Math.max(minimum, Math.min(parsed, maximum)) : fallback;
+}
+
+export function createUser(
+  email: string,
+  name: string,
+  passwordHash: string,
+  role: DbUser['role'] = 'analyst'
+): Promise<void> {
   return run(
-    `INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)`,
-    [email, name, passwordHash]
+    `INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)`,
+    [email, name, passwordHash, role]
   )
     .then(() => undefined)
     .catch((err) => {
-      logger.error(`createUser error for ${email}:`, err);
+      logger.error('createUser database error.', err);
       throw err;
     });
 }
 
 export function findUserByEmail(email: string): Promise<DbUser | null> {
   return get<DbUser>(`SELECT * FROM users WHERE email = ?`, [email]).catch((err) => {
-    logger.error(`findUserByEmail error for ${email}:`, err);
+    logger.error('findUserByEmail database error.', err);
     throw err;
   });
 }
@@ -297,23 +341,30 @@ export async function saveUserDataset(
   rowCount = 0,
   columnCount = 0
 ): Promise<number> {
-  try {
-    await run('BEGIN IMMEDIATE');
-    await run(`UPDATE ${DATASET_TABLE} SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE email = ?`, [email]);
-    const result = await run(
-      `
-      INSERT INTO ${DATASET_TABLE} (email, filename, file_content, warning, is_active, row_count, column_count)
-      VALUES (?, ?, ?, ?, 1, ?, ?)
-    `,
+  return withTransaction(async () => {
+    const usage = await get<{ count: number; chars: number }>(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(LENGTH(file_content)), 0) AS chars FROM ${DATASET_TABLE} WHERE email = ?`,
+      [email]
+    );
+    const maxCount = boundedEnvInt('MAX_DATASET_COUNT', 50, 1, 500);
+    const maxTotalChars = boundedEnvInt('MAX_DATASET_TOTAL_CHARS', 20_000_000, 100_000, 100_000_000);
+    if ((usage?.count ?? 0) >= maxCount || (usage?.chars ?? 0) + content.length > maxTotalChars) {
+      throw new StorageQuotaError(
+        'DATASET_QUOTA_EXCEEDED',
+        `Veri seti kotası aşıldı (en fazla ${maxCount} dosya ve toplam ${maxTotalChars} karakter).`
+      );
+    }
+    await runDirect(`UPDATE ${DATASET_TABLE} SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE email = ?`, [email]);
+    const result = await runDirect(
+      `INSERT INTO ${DATASET_TABLE} (email, filename, file_content, warning, is_active, row_count, column_count)
+       VALUES (?, ?, ?, ?, 1, ?, ?)`,
       [email, filename, content, warning, rowCount, columnCount]
     );
-    await run('COMMIT');
     return result.lastID;
-  } catch (err) {
-    await run('ROLLBACK').catch(() => undefined);
-    logger.error(`saveUserDataset error for ${email}:`, err);
+  }).catch((err) => {
+    logger.error('saveUserDataset database error.', err);
     throw err;
-  }
+  });
 }
 
 export function listUserDatasets(email: string): Promise<DatasetMeta[]> {
@@ -326,7 +377,7 @@ export function listUserDatasets(email: string): Promise<DatasetMeta[]> {
   `,
     [email]
   ).catch((err) => {
-    logger.error(`listUserDatasets error for ${email}:`, err);
+    logger.error('listUserDatasets database error.', err);
     throw err;
   });
 }
@@ -341,7 +392,7 @@ export function getUserDatasets(email: string): Promise<Dataset[]> {
   `,
     [email]
   ).catch((err) => {
-    logger.error(`getUserDatasets error for ${email}:`, err);
+    logger.error('getUserDatasets database error.', err);
     throw err;
   });
 }
@@ -364,7 +415,7 @@ export async function getUserActiveDataset(email: string): Promise<Dataset | nul
   `,
     [email]
   ).catch((err) => {
-    logger.error(`getUserActiveDataset error for ${email}:`, err);
+    logger.error('getUserActiveDataset database error.', err);
     throw err;
   });
 
@@ -382,47 +433,44 @@ export function getLatestDataset(email: string): Promise<Dataset | null> {
   `,
     [email]
   ).catch((err) => {
-    logger.error(`getLatestDataset error for ${email}:`, err);
+    logger.error('getLatestDataset database error.', err);
     throw err;
   });
 }
 
 export async function setActiveDataset(email: string, id: number): Promise<boolean> {
-  const dataset = await getUserDataset(email, id);
-  if (!dataset) return false;
-
-  try {
-    await run('BEGIN IMMEDIATE');
-    await run(`UPDATE ${DATASET_TABLE} SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE email = ?`, [email]);
-    await run(`UPDATE ${DATASET_TABLE} SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE email = ? AND id = ?`, [email, id]);
-    await run('COMMIT');
+  return withTransaction(async () => {
+    const dataset = await get<Dataset>(`SELECT * FROM ${DATASET_TABLE} WHERE id = ? AND email = ?`, [id, email]);
+    if (!dataset) return false;
+    await runDirect(`UPDATE ${DATASET_TABLE} SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE email = ?`, [email]);
+    await runDirect(`UPDATE ${DATASET_TABLE} SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE email = ? AND id = ?`, [email, id]);
     return true;
-  } catch (err) {
-    await run('ROLLBACK').catch(() => undefined);
+  }).catch((err) => {
     logger.error(`setActiveDataset error id=${id}:`, err);
     throw err;
-  }
-}
-
-async function activateLatestDataset(email: string): Promise<void> {
-  const latest = await getLatestDataset(email);
-  if (latest) await setActiveDataset(email, latest.id);
+  });
 }
 
 export async function deleteDataset(email: string, id: number): Promise<boolean> {
-  const dataset = await getUserDataset(email, id);
-  if (!dataset) return false;
-
-  const result = await run(`DELETE FROM ${DATASET_TABLE} WHERE id = ? AND email = ?`, [id, email]).catch((err) => {
+  return withTransaction(async () => {
+    const dataset = await get<Dataset>(`SELECT * FROM ${DATASET_TABLE} WHERE id = ? AND email = ?`, [id, email]);
+    if (!dataset) return false;
+    const result = await runDirect(`DELETE FROM ${DATASET_TABLE} WHERE id = ? AND email = ?`, [id, email]);
+    if (result.changes > 0 && dataset.is_active === 1) {
+      const latest = await get<Pick<Dataset, 'id'>>(
+        `SELECT id FROM ${DATASET_TABLE} WHERE email = ? ORDER BY datetime(created_at) DESC, id DESC LIMIT 1`,
+        [email]
+      );
+      if (latest) {
+        await runDirect(`UPDATE ${DATASET_TABLE} SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE email = ?`, [email]);
+        await runDirect(`UPDATE ${DATASET_TABLE} SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE email = ? AND id = ?`, [email, latest.id]);
+      }
+    }
+    return result.changes > 0;
+  }).catch((err) => {
     logger.error(`deleteDataset error id=${id}:`, err);
     throw err;
   });
-
-  if (result.changes > 0 && dataset.is_active === 1) {
-    await activateLatestDataset(email);
-  }
-
-  return result.changes > 0;
 }
 
 export async function deleteActiveDataset(email: string): Promise<boolean> {
@@ -435,30 +483,44 @@ export function deleteAllDatasets(email: string): Promise<number> {
   return run(`DELETE FROM ${DATASET_TABLE} WHERE email = ?`, [email])
     .then((result) => result.changes)
     .catch((err) => {
-      logger.error(`deleteAllDatasets error for ${email}:`, err);
+      logger.error('deleteAllDatasets database error.', err);
       throw err;
     });
 }
 
 export async function updateUser(email: string, name: string, passwordHash?: string): Promise<void> {
   if (passwordHash) {
-    await run(`UPDATE users SET name = ?, password_hash = ? WHERE email = ?`, [name, passwordHash, email]);
+    await run(
+      `UPDATE users SET name = ?, password_hash = ?, token_version = token_version + 1 WHERE email = ?`,
+      [name, passwordHash, email]
+    );
   } else {
     await run(`UPDATE users SET name = ? WHERE email = ?`, [name, email]);
   }
 }
 
 export async function deleteUser(email: string): Promise<void> {
-  try {
-    await run('BEGIN IMMEDIATE');
-    await run(`DELETE FROM ${DATASET_TABLE} WHERE email = ?`, [email]);
-    await run(`DELETE FROM users WHERE email = ?`, [email]);
-    await run('COMMIT');
-  } catch (err) {
-    await run('ROLLBACK').catch(() => undefined);
-    logger.error(`deleteUser error for ${email}:`, err);
+  return withTransaction(async () => {
+    const user = await get<Pick<DbUser, 'role'>>('SELECT role FROM users WHERE email = ?', [email]);
+    if (user?.role === 'admin') {
+      const adminCount = await get<{ count: number }>(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin'`);
+      if ((adminCount?.count ?? 0) <= 1) throw new LastAdminError();
+    }
+    await runDirect(`DELETE FROM ${DATASET_TABLE} WHERE email = ?`, [email]);
+    await runDirect('DELETE FROM user_connections WHERE email = ?', [email]);
+    await runDirect('DELETE FROM user_documents WHERE email = ?', [email]);
+    await runDirect('DELETE FROM organizations WHERE email = ?', [email]);
+    await runDirect('DELETE FROM user_notifications WHERE email = ?', [email]);
+    await runDirect('DELETE FROM audit_logs WHERE email = ?', [email]);
+    await runDirect(`DELETE FROM users WHERE email = ?`, [email]);
+  }).catch((err) => {
+    if (err instanceof LastAdminError) {
+      logger.warn('Son yönetici hesabını silme girişimi engellendi.');
+    } else {
+      logger.error('deleteUser database error.', err);
+    }
     throw err;
-  }
+  });
 }
 
 // Enterprise connection helpers
@@ -483,14 +545,39 @@ export function deleteConnection(email: string, id: number): Promise<boolean> {
 
 // Enterprise documents (RAG) helpers
 export function listDocuments(email: string): Promise<any[]> {
-  return all<any>(`SELECT * FROM user_documents WHERE email = ? ORDER BY id DESC`, [email]);
+  return all<any>(
+    `SELECT id, email, filename, chunks_count, status, created_at FROM user_documents WHERE email = ? ORDER BY id DESC`,
+    [email]
+  );
+}
+
+export function getDocumentsForSearch(email: string): Promise<any[]> {
+  return all<any>(
+    `SELECT id, filename, content, chunks_count, status, created_at FROM user_documents WHERE email = ? ORDER BY id DESC`,
+    [email]
+  );
 }
 
 export function saveDocument(email: string, filename: string, content: string, chunksCount: number): Promise<number> {
-  return run(
-    `INSERT INTO user_documents (email, filename, content, chunks_count, status) VALUES (?, ?, ?, ?, 'indexed')`,
-    [email, filename, content, chunksCount]
-  ).then((r) => r.lastID);
+  return withTransaction(async () => {
+    const usage = await get<{ count: number; chars: number }>(
+      'SELECT COUNT(*) AS count, COALESCE(SUM(LENGTH(content)), 0) AS chars FROM user_documents WHERE email = ?',
+      [email]
+    );
+    const maxCount = boundedEnvInt('MAX_DOCUMENT_COUNT', 50, 1, 500);
+    const maxTotalChars = boundedEnvInt('MAX_DOCUMENT_TOTAL_CHARS', 2_000_000, 10_000, 20_000_000);
+    if ((usage?.count ?? 0) >= maxCount || (usage?.chars ?? 0) + content.length > maxTotalChars) {
+      throw new StorageQuotaError(
+        'DOCUMENT_QUOTA_EXCEEDED',
+        `Doküman kotası aşıldı (en fazla ${maxCount} dosya ve toplam ${maxTotalChars} karakter).`
+      );
+    }
+    const result = await runDirect(
+      `INSERT INTO user_documents (email, filename, content, chunks_count, status) VALUES (?, ?, ?, ?, 'indexed')`,
+      [email, filename, content, chunksCount]
+    );
+    return result.lastID;
+  });
 }
 
 export function deleteDocument(email: string, id: number): Promise<boolean> {
@@ -499,14 +586,20 @@ export function deleteDocument(email: string, id: number): Promise<boolean> {
 
 // Enterprise audit logs helpers
 export function listAuditLogs(email: string): Promise<any[]> {
-  return all<any>(`SELECT * FROM audit_logs WHERE email = ? ORDER BY id DESC`, [email]);
+  return all<any>(`SELECT * FROM audit_logs WHERE email = ? ORDER BY id DESC LIMIT 200`, [email]);
 }
 
 export function addAuditLog(email: string, action: string, details: string, ipAddress: string = '127.0.0.1'): Promise<number> {
-  return run(
-    `INSERT INTO audit_logs (email, action, details, ip_address) VALUES (?, ?, ?, ?)`,
-    [email, action, details, ipAddress]
-  ).then((r) => r.lastID);
+  return withTransaction(async () => {
+    const usage = await get<{ count: number }>('SELECT COUNT(*) AS count FROM audit_logs WHERE email = ?', [email]);
+    const maxEntries = boundedEnvInt('AUDIT_MAX_ENTRIES_PER_USER', 2_000, 100, 100_000);
+    if ((usage?.count ?? 0) >= maxEntries) throw new Error('AUDIT_QUOTA_EXCEEDED');
+    const result = await runDirect(
+      `INSERT INTO audit_logs (email, action, details, ip_address) VALUES (?, ?, ?, ?)`,
+      [email, action, details, ipAddress]
+    );
+    return result.lastID;
+  });
 }
 
 // Enterprise organization (tenant) helpers
@@ -523,23 +616,86 @@ export function createOrganization(email: string, name: string, tenantId: string
 
 // Enterprise user role helpers
 export function getUserRole(email: string): Promise<string> {
-  return get<{ role: string }>(`SELECT role FROM users WHERE email = ?`, [email]).then((r) => r?.role ?? 'admin');
+  return get<{ role: string }>(`SELECT role FROM users WHERE email = ?`, [email]).then((r) => r?.role ?? 'analyst');
 }
 
-export function updateUserRole(email: string, role: string): Promise<boolean> {
-  return run(`UPDATE users SET role = ? WHERE email = ?`, [role, email]).then((r) => r.changes > 0);
+export function updateUserRole(email: string, role: DbUser['role']): Promise<boolean> {
+  return changeUserRole(email, role).then((result) => result === 'updated');
+}
+
+export function changeUserRole(
+  email: string,
+  role: DbUser['role']
+): Promise<'updated' | 'not_found' | 'last_admin'> {
+  return withTransaction(async () => {
+    const target = await get<Pick<DbUser, 'role'>>('SELECT role FROM users WHERE email = ?', [email]);
+    if (!target) return 'not_found';
+    if (target.role === 'admin' && role !== 'admin') {
+      const adminCount = await get<{ count: number }>(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin'`);
+      if ((adminCount?.count ?? 0) <= 1) return 'last_admin';
+    }
+    await runDirect(
+      `UPDATE users SET role = ?, token_version = token_version + 1 WHERE email = ?`,
+      [role, email]
+    );
+    return 'updated';
+  });
+}
+
+export function listUsers(): Promise<Array<Pick<DbUser, 'email' | 'name' | 'role' | 'created_at'>>> {
+  return all(`SELECT email, name, role, created_at FROM users ORDER BY datetime(created_at), email`);
+}
+
+export async function checkDatabase(): Promise<boolean> {
+  try {
+    await databaseReady;
+    if ((await get<{ ok: number }>('SELECT 1 AS ok'))?.ok !== 1) return false;
+    const tables = await all<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', '${DATASET_TABLE}', 'user_connections', 'user_documents', 'audit_logs', 'organizations', 'user_notifications')`
+    );
+    if (tables.length !== 7) return false;
+    const userColumns = new Set((await all<{ name: string }>('PRAGMA table_info(users)')).map((column) => column.name));
+    const datasetColumns = new Set((await all<{ name: string }>(`PRAGMA table_info(${DATASET_TABLE})`)).map((column) => column.name));
+    return ['email', 'password_hash', 'role', 'token_version'].every((column) => userColumns.has(column)) &&
+      ['id', 'email', 'filename', 'file_content', 'is_active'].every((column) => datasetColumns.has(column));
+  } catch {
+    return false;
+  }
+}
+
+let closePromise: Promise<void> | null = null;
+
+export function closeDatabase(): Promise<void> {
+  if (closePromise) return closePromise;
+  closePromise = serializeWrite(async () => {
+    if (configuredDbPath !== ':memory:') {
+      await new Promise<void>((resolve, reject) => {
+        db.get('PRAGMA wal_checkpoint(TRUNCATE)', (err) => err ? reject(err) : resolve());
+      });
+    }
+    await new Promise<void>((resolve, reject) => {
+      db.close((err) => err ? reject(err) : resolve());
+    });
+  });
+  return closePromise;
 }
 
 // Enterprise notification helpers
 export function listNotifications(email: string): Promise<any[]> {
-  return all<any>(`SELECT * FROM user_notifications WHERE email = ? ORDER BY id DESC`, [email]);
+  return all<any>(`SELECT * FROM user_notifications WHERE email = ? ORDER BY id DESC LIMIT 100`, [email]);
 }
 
 export function addNotification(email: string, title: string, message: string): Promise<number> {
-  return run(
-    `INSERT INTO user_notifications (email, title, message) VALUES (?, ?, ?)`,
-    [email, title, message]
-  ).then((r) => r.lastID);
+  return withTransaction(async () => {
+    const usage = await get<{ count: number }>('SELECT COUNT(*) AS count FROM user_notifications WHERE email = ?', [email]);
+    const maxEntries = boundedEnvInt('NOTIFICATION_MAX_ENTRIES_PER_USER', 500, 50, 10_000);
+    if ((usage?.count ?? 0) >= maxEntries) throw new Error('NOTIFICATION_QUOTA_EXCEEDED');
+    const result = await runDirect(
+      `INSERT INTO user_notifications (email, title, message) VALUES (?, ?, ?)`,
+      [email, title, message]
+    );
+    return result.lastID;
+  });
 }
 
 export function markNotificationsRead(email: string): Promise<boolean> {
@@ -549,4 +705,3 @@ export function markNotificationsRead(email: string): Promise<boolean> {
 export const saveDataset = saveUserDataset;
 export const listDatasets = listUserDatasets;
 export const getDataset = getUserDataset;
-

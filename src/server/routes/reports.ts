@@ -1,7 +1,14 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../index';
 import { getCombinedUserDataset } from '../datasets/combined';
-import { buildAutomaticInsights, buildDataProfile, buildDatasetSummary, buildExportPayload, buildMlInsights } from '../ml/pipeline';
+import {
+  buildAutomaticInsights,
+  buildDataProfile,
+  buildDatasetSummary,
+  buildExportPayload,
+  buildMlForecast,
+  buildMlInsights
+} from '../ml/pipeline';
 
 const router = Router();
 
@@ -13,17 +20,20 @@ function sendFile(res: Response, payload: ReturnType<typeof buildExportPayload>)
   res.send(buf);
 }
 
-router.get('/download', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/download', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const { verifyToken } = await import('../../lib/auth');
-    const token = typeof req.query.token === 'string' ? req.query.token : '';
-    const decoded = token ? verifyToken(token) : null;
-    if (!decoded) return res.status(401).json({ error: 'Rapor indirmek icin giris yapin.' });
-
     const type = typeof req.query.type === 'string' ? req.query.type : 'dashboard';
-    const dataset = await getCombinedUserDataset(decoded.email);
+    if (!['dashboard', 'insights', 'prediction', 'quality'].includes(type)) {
+      return res.status(400).json({ error: { code: 'INVALID_REPORT_TYPE', message: 'Geçersiz rapor tipi.' } });
+    }
+    const dataset = await getCombinedUserDataset(req.user!.email);
+    if (!dataset) {
+      return res.status(404).json({
+        error: { code: 'NO_DATASET', message: 'Rapor oluşturmak için önce veri yükleyin.' }
+      });
+    }
 
-    if (type === 'insights' && dataset) {
+    if (type === 'insights') {
       const profile = buildDataProfile(dataset.file_content);
       const ml = buildMlInsights(dataset.file_content, dataset.filename);
       const summary = buildDatasetSummary(dataset.file_content, dataset.filename);
@@ -37,7 +47,7 @@ router.get('/download', async (req: Request, res: Response, next: NextFunction) 
       );
     }
 
-    if (type === 'dashboard' && dataset) {
+    if (type === 'dashboard') {
       const summary = buildDatasetSummary(dataset.file_content, dataset.filename);
       return sendFile(res, buildExportPayload(`Dashboard Raporu - ${dataset.filename}`, [
         { metric: 'Dosya Sayisi', value: dataset.dataset_count },
@@ -51,7 +61,40 @@ router.get('/download', async (req: Request, res: Response, next: NextFunction) 
       ]));
     }
 
-    sendFile(res, buildExportPayload('Dashboard Raporu', [{ metric: 'Durum', value: 'Henuz veri yuklenmedi.' }]));
+    if (type === 'prediction') {
+      const forecast = buildMlForecast(dataset.file_content, dataset.filename);
+      const rows: Array<{ metric: string; value: string | number }> = [
+        { metric: 'Hedef Kolon', value: forecast.targetColumn || 'Sayısal hedef bulunamadı' },
+        { metric: 'Model', value: forecast.model },
+        { metric: 'Eğitim Satırı', value: forecast.trainRows },
+        { metric: 'Test Satırı', value: forecast.testRows },
+        { metric: 'Heuristik Uyum Skoru', value: `${forecast.accuracy.toFixed(1)}%` },
+        { metric: 'Skor Türü', value: 'Eğitim verisi uyumu; holdout doğruluğu değildir' },
+        { metric: 'MAE', value: forecast.metrics.mae },
+        { metric: 'RMSE', value: forecast.metrics.rmse },
+        { metric: 'R²', value: forecast.metrics.r2 },
+        { metric: 'Anomali Sayısı', value: forecast.anomalies.length }
+      ];
+      forecast.forecast.slice(0, 24).forEach((point) => {
+        rows.push({ metric: `Tahmin ${point.row}`, value: point.predicted });
+      });
+      return sendFile(res, buildExportPayload(`Tahmin ve Anomali Raporu - ${dataset.filename}`, rows));
+    }
+
+    const profile = buildDataProfile(dataset.file_content);
+    const qualityRows: Array<{ metric: string; value: string | number }> = [
+      { metric: 'Dosya Sayısı', value: dataset.dataset_count },
+      { metric: 'Satır Sayısı', value: profile.rowCount },
+      { metric: 'Kolon Sayısı', value: profile.columnCount },
+      { metric: 'Veri Türü', value: profile.datasetType }
+    ];
+    profile.columns.forEach((column) => {
+      qualityRows.push({
+        metric: `${column.name} / kalite`,
+        value: `tür=${column.type}; boş=%${column.nullRate}; benzersiz=${column.uniqueCount}`
+      });
+    });
+    return sendFile(res, buildExportPayload(`Veri Kalite Raporu - ${dataset.filename}`, qualityRows));
   } catch (err) {
     next(err);
   }
@@ -60,7 +103,7 @@ router.get('/download', async (req: Request, res: Response, next: NextFunction) 
 router.post('/export', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const { title, rows } = req.body;
-    if (!Array.isArray(rows) || rows.length === 0) {
+    if (!Array.isArray(rows) || rows.length === 0 || rows.length > 10_000) {
       return res.status(400).json({ error: 'Rapor icin veri bulunamadi.' });
     }
     res.json(buildExportPayload(String(title || 'Rapor'), rows));

@@ -164,10 +164,10 @@ function selectTargetColumn(headers: string[], body: string[][], filename = "dat
 
   const best = numericColumns[0];
   if (!best) {
-    logger.warn("ML target selection failed: no numeric target column found", { filename, headers });
+    logger.warn("ML target selection failed: no numeric target column found", { columnCount: headers.length });
     return { index: -1, header: null, reason: "No numeric column found", numericColumns };
   }
-  logger.info("ML target column selected", { filename, targetColumn: best.header, candidates: numericColumns.slice(0, 5).map(({ header, score }) => ({ header, score })) });
+  logger.info("ML target column selected", { candidateCount: numericColumns.length, bestScore: best.score });
   return { index: best.index, header: best.header, reason: "highest scored numeric column", numericColumns };
 }
 
@@ -333,7 +333,11 @@ export function buildMlForecast(fileContent: string, filename = "dataset.csv"): 
   const rawConfidence = !hasUsable || suspicious ? 0 : Math.max(0.35, Math.min(0.95, 1 - nrmse));
   const depthBoost = Math.min(0.06, Math.max(0, (n - 3) / 100));
   const stabilityBoost = Math.max(0, Math.min(0.07, Math.max(r2, 0) * 0.07));
-  const displayConfidence = !hasUsable || suspicious ? 0 : Math.max(0.8, Math.min(0.95, 0.8 + rawConfidence * 0.09 + depthBoost + stabilityBoost));
+  // This is an in-sample heuristic fit score, not holdout accuracy. Keep it
+  // proportional to observed error and data depth; never apply a cosmetic floor.
+  const displayConfidence = !hasUsable || suspicious
+    ? 0
+    : Math.max(0, Math.min(0.95, rawConfidence * 0.85 + depthBoost + stabilityBoost));
 
   const forecast = Array.from({ length: 3 }, (_, i) => {
     const raw = selectedModel.predict(i);
@@ -372,7 +376,7 @@ export function buildAutomaticInsights(profile: DataProfile, insights: MlInsight
   const riskyColumns = profile.columns.filter((c) => c.nullRate >= 20).slice(0, 3);
   if (topGroup) items.push({ title: "En yüksek değer öne çıktı", description: `${topGroup.name} grubu ${Math.round(topGroup.ciro).toLocaleString("tr-TR")} değer ile ilk sırada.`, severity: "success", score: 0.95 });
   if (insights.anomalies.data.length > 0) { const a = insights.anomalies.data[0] as any; items.push({ title: "Aykırı değer yakalandı", description: `${a.label} normal dağılımdan ayrışıyor.`, severity: "warning", score: 0.94 }); }
-  if (forecastPeak) items.push({ title: "Tahmin sinyali hazır", description: `Model ${forecastPeak.row} için en yüksek tahmini üretiyor. Güven skoru %${Math.round(insights.forecast.confidence * 100)}.`, severity: "info", score: insights.forecast.confidence });
+  if (forecastPeak) items.push({ title: "Tahmin sinyali hazır", description: `Model ${forecastPeak.row} için en yüksek tahmini üretiyor. Heuristik uyum skoru %${Math.round(insights.forecast.confidence * 100)}.`, severity: "info", score: insights.forecast.confidence });
   if (insights.segments.data.length >= 2) { const s = [...insights.segments.data].sort((a: any, b: any) => b.averageValue - a.averageValue)[0] as any; items.push({ title: "Segment farkı oluştu", description: `${s.label} segmenti ortalama değer açısından ayrışıyor.`, severity: "info", score: insights.segments.confidence }); }
   if (summary.grossMargin !== 0 && summary.costColumn !== null) items.push({ title: "Kârlılık oranı hesaplandı", description: `Brüt kâr oranı yaklaşık %${summary.grossMargin.toFixed(1)}.`, severity: summary.grossMargin < 20 ? "warning" : "success", score: summary.grossMargin < 20 ? 0.81 : 0.78 });
   if (riskyColumns.length > 0) items.push({ title: "Veri kalitesi kontrolü önerilir", description: `${riskyColumns.map((c) => c.name).join(", ")} kolonlarında boş değer oranı yüksek.`, severity: "warning", score: 0.86 });
@@ -395,10 +399,15 @@ export function recommendWidgets(profile: DataProfile, insights: MlInsightsResul
 }
 
 export function buildExportPayload(title: string, rows: Array<{ metric: string; value: string | number }>) {
-  const safeTitle = title.trim() || "Rapor";
+  const safeTitle = (title.trim() || "Rapor").replace(/[\r\n]+/g, " ").slice(0, 150);
+  const safeCell = (input: unknown) => {
+    let value = String(input ?? "");
+    if (/^[\t\r ]*[=+\-@]/.test(value)) value = `'${value}`;
+    return `"${value.replace(/"/g, '""')}"`;
+  };
   const header = "Metrik,Deger";
-  const csvRows = rows.map((r) => { const m = String(r.metric ?? "").replace(/"/g, '""'); const v = String(r.value ?? "").replace(/"/g, '""'); return `"${m}","${v}"`; });
-  const csv = [safeTitle, "", header, ...csvRows].join("\n");
+  const csvRows = rows.map((row) => `${safeCell(row.metric)},${safeCell(row.value)}`);
+  const csv = [safeCell(safeTitle), "", header, ...csvRows].join("\n");
   const slug = safeTitle.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "rapor";
   return { fileName: `${slug}.csv`, contentType: "text/csv;charset=utf-8", base64Content: Buffer.from(csv, "utf8").toString("base64") };
 }

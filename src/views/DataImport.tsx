@@ -106,11 +106,10 @@ export default function DataImport({ onNextView }: { onNextView?: () => void }) 
     onDragOver: () => undefined,
     accept: {
       'text/csv': ['.csv'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-      'application/vnd.ms-excel': ['.xls'],
     },
     multiple: false,
     maxFiles: 1,
+    maxSize: 10 * 1024 * 1024,
   });
 
   const formatDate = (iso: string) =>
@@ -126,7 +125,7 @@ export default function DataImport({ onNextView }: { onNextView?: () => void }) 
         <div>
           <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">Veri Kaynakları</h2>
           <p className="text-xs text-slate-500 dark:text-white/40 mt-1 leading-relaxed">
-            Analiz etmek istediğiniz CSV veya Excel dosyalarını buraya yükleyebilir veya mevcut dosyalarınızı yönetebilirsiniz.
+            Analiz etmek istediğiniz CSV dosyalarını buraya yükleyebilir veya mevcut dosyalarınızı yönetebilirsiniz.
           </p>
         </div>
         
@@ -177,7 +176,7 @@ export default function DataImport({ onNextView }: { onNextView?: () => void }) 
           {isDragActive ? 'Dosyayı Buraya Bırakın...' : isUploading ? 'Dosya İşleniyor...' : 'Analiz Edilecek Yeni Dosya Yükle'}
         </h3>
         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40 mb-6">
-          DESTEKLENEN DOSYA TÜRLERİ: .CSV, .XLSX, .XLS (MAKS. 50 MB)
+          DESTEKLENEN DOSYA TÜRÜ: .CSV (MAKS. 10 MB)
         </p>
         <button className={cn(
           "inline-flex items-center gap-2 px-5 py-2.5 border rounded-xl text-xs font-bold uppercase tracking-wider transition-all",

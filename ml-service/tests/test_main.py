@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.main import app, _cache
+from app.main import TenantModelCache, app, _cache
 
 
 # ---------------------------------------------------------------------------
@@ -124,8 +124,8 @@ def test_predict_different_tenants_separate_cache() -> None:
     assert r_b2.json()["cached"] is True   # cache hit for B
 
     stats = client.get("/ml/cache").json()
-    assert stats["tenants"].get(TENANT_A, 0) >= 1
-    assert stats["tenants"].get(TENANT_B, 0) >= 1
+    assert stats["tenant_count"] >= 2
+    assert "tenants" not in stats
 
 
 def test_predict_cache_miss_on_data_change() -> None:
@@ -168,6 +168,31 @@ def test_analyze_cache_hit_same_tenant() -> None:
     assert r2.json()["cached"] is True
 
 
+def test_analyze_cache_varies_by_target_and_periods() -> None:
+    """A cached analysis must not reuse a different target or forecast horizon."""
+    _clear_all()
+    client = TestClient(app)
+    headers = {"x-tenant-id": TENANT_A}
+
+    revenue = client.post(
+        "/analyze",
+        json={"rows": ROWS_SMALL, "target_column": "revenue", "periods": 2},
+        headers=headers,
+    )
+    cost = client.post(
+        "/analyze",
+        json={"rows": ROWS_SMALL, "target_column": "cost", "periods": 4},
+        headers=headers,
+    )
+
+    assert revenue.status_code == 200
+    assert cost.status_code == 200
+    assert revenue.json()["cached"] is False
+    assert cost.json()["cached"] is False
+    assert cost.json()["target_column"] == "cost"
+    assert len(cost.json()["forecast"]["data"]) == 4
+
+
 def test_analyze_different_tenants_isolated() -> None:
     """Analyze: tenant A cache does not bleed into tenant B."""
     _clear_all()
@@ -193,17 +218,18 @@ def test_cache_clear_endpoint() -> None:
     client.post("/analyze", json=payload, headers={"x-tenant-id": TENANT_B})
 
     before_stats = client.get("/ml/cache").json()
-    assert before_stats["tenants"].get(TENANT_A, 0) >= 1
-    assert before_stats["tenants"].get(TENANT_B, 0) >= 1
+    assert before_stats["tenant_count"] >= 2
 
     # Clear only A
     del_response = client.delete(f"/ml/cache/{TENANT_A}")
     assert del_response.status_code == 200
     assert del_response.json()["cleared_entries"] >= 1
 
-    after_stats = client.get("/ml/cache").json()
-    assert after_stats["tenants"].get(TENANT_A, 0) == 0
-    assert after_stats["tenants"].get(TENANT_B, 0) >= 1  # B untouched
+    # A is cold after clear while B still uses its cached model.
+    a_after = client.post("/analyze", json=payload, headers={"x-tenant-id": TENANT_A})
+    b_after = client.post("/analyze", json=payload, headers={"x-tenant-id": TENANT_B})
+    assert a_after.json()["cached"] is False
+    assert b_after.json()["cached"] is True
 
 
 def test_anonymous_tenant_fallback() -> None:
@@ -219,4 +245,37 @@ def test_anonymous_tenant_fallback() -> None:
     assert r2.json()["cached"] is True
 
     stats = client.get("/ml/cache").json()
-    assert "anonymous" in stats["tenants"]
+    assert stats["tenant_count"] == 1
+    assert "tenants" not in stats
+
+
+def test_cache_is_bounded_and_does_not_expose_tenant_ids() -> None:
+    cache = TenantModelCache(max_entries=2)
+    cache.put("customer-one@example.test", "a", "predict", object(), {})
+    cache.put("customer-two@example.test", "b", "predict", object(), {})
+    cache.put("customer-three@example.test", "c", "predict", object(), {})
+
+    stats = cache.stats()
+    assert stats == {"total_entries": 2, "tenant_count": 2, "max_entries": 2, "evictions": 1}
+    assert "customer-one@example.test" not in str(stats)
+
+
+def test_cache_clear_requires_configured_internal_key(monkeypatch) -> None:
+    monkeypatch.setenv("ML_INTERNAL_API_KEY", "test-internal-key")
+    client = TestClient(app)
+
+    denied = client.delete(f"/ml/cache/{TENANT_A}")
+    allowed = client.delete(
+        f"/ml/cache/{TENANT_A}",
+        headers={"x-internal-api-key": "test-internal-key"},
+    )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+
+
+def test_analyze_rejects_excessive_column_count() -> None:
+    client = TestClient(app)
+    oversized_row = {f"column-{index}": index for index in range(101)}
+    response = client.post("/analyze", json={"rows": [oversized_row] * 3})
+    assert response.status_code == 422

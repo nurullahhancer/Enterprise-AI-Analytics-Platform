@@ -12,6 +12,7 @@ interface SettingsProps {
 
 export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps) {
   const [name, setName] = useState(user.name);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isDark, setIsDark] = useState(true);
@@ -26,6 +27,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -71,8 +73,20 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentPassword) {
+      setPasswordMessage({ type: 'error', text: 'Mevcut şifrenizi girin.' });
+      return;
+    }
     if (!password) {
       setPasswordMessage({ type: 'error', text: 'Şifre alanı boş bırakılamaz.' });
+      return;
+    }
+    if (password.length < 12 || !/[A-Za-zÇĞİÖŞÜçğıöşü]/.test(password) || !/\d/.test(password)) {
+      setPasswordMessage({ type: 'error', text: 'Yeni şifre en az 12 karakter olmalı ve harf ile rakam içermelidir.' });
+      return;
+    }
+    if (password === currentPassword) {
+      setPasswordMessage({ type: 'error', text: 'Yeni şifre mevcut şifreden farklı olmalıdır.' });
       return;
     }
     if (password !== confirmPassword) {
@@ -90,15 +104,17 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
           ...jsonHeaders(),
           ...authHeaders()
         },
-        body: JSON.stringify({ name: user.name, password })
+        body: JSON.stringify({ name: user.name, password, currentPassword })
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error?.message || 'Şifre güncellenirken bir hata oluştu.');
       }
       
+      setCurrentPassword('');
       setPassword('');
       setConfirmPassword('');
+      if (data.token) localStorage.setItem('reai_token', data.token);
       setPasswordMessage({ type: 'success', text: 'Şifreniz başarıyla güncellendi.' });
     } catch (err: any) {
       setPasswordMessage({ type: 'error', text: err.message });
@@ -108,6 +124,10 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
   };
 
   const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      setDeleteError('Hesabı silmek için mevcut şifrenizi girin.');
+      return;
+    }
     setIsDeleting(true);
     setDeleteError(null);
 
@@ -115,8 +135,10 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
       const res = await fetch(getApiUrl('/api/user'), {
         method: 'DELETE',
         headers: {
+          ...jsonHeaders(),
           ...authHeaders()
-        }
+        },
+        body: JSON.stringify({ currentPassword: deletePassword })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -124,6 +146,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
       }
       
       setShowDeleteModal(false);
+      setDeletePassword('');
       onLogout();
     } catch (err: any) {
       setDeleteError(err.message);
@@ -142,7 +165,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
           "text-sm mt-1",
           isDark ? "text-white/60" : "text-slate-500"
         )}>
-          Profil bilgiilerinizi yönetin, şifrenizi güncelleyin veya hesabınızı silin.
+          Profil bilgilerinizi yönetin, şifrenizi güncelleyin veya hesabınızı silin.
         </p>
       </div>
 
@@ -159,9 +182,11 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
 
           <form onSubmit={handleUpdateProfile} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">E-posta</label>
+              <label htmlFor="settings-email" className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">E-posta</label>
               <input
+                id="settings-email"
                 type="text"
+                autoComplete="email"
                 disabled
                 value={user.email}
                 className={cn(
@@ -172,15 +197,17 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Görünen İsim</label>
+              <label htmlFor="settings-name" className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Görünen İsim</label>
               <input
+                id="settings-name"
                 type="text"
+                autoComplete="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className={cn(
                   "w-full px-4 py-3 rounded-xl border text-xs font-medium focus:outline-none transition-all duration-200",
-                  isDark 
-                    ? "bg-[#1A1A1A] border-white/10 text-white focus:border-[#FFD700]" 
+                  isDark
+                    ? "bg-[#1A1A1A] border-white/10 text-white focus:border-[#FFD700]"
                     : "bg-slate-50 border-slate-200 text-slate-800 focus:border-[#4F46E5]"
                 )}
                 placeholder="İsminiz"
@@ -226,9 +253,32 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
 
           <form onSubmit={handleUpdatePassword} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Yeni Şifre</label>
+              <label htmlFor="current-password" className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Mevcut Şifre</label>
               <input
+                id="current-password"
                 type="password"
+                autoComplete="current-password"
+                required
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className={cn(
+                  "w-full px-4 py-3 rounded-xl border text-xs font-medium focus:outline-none transition-all duration-200",
+                  isDark
+                    ? "bg-[#1A1A1A] border-white/10 text-white focus:border-[#FFD700]"
+                    : "bg-slate-50 border-slate-200 text-slate-800 focus:border-[#4F46E5]"
+                )}
+                placeholder="••••••••"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="new-password" className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Yeni Şifre</label>
+              <input
+                id="new-password"
+                type="password"
+                autoComplete="new-password"
+                minLength={8}
+                required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className={cn(
@@ -242,9 +292,13 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Yeni Şifre (Tekrar)</label>
+              <label htmlFor="confirm-password" className="block text-xs font-bold uppercase tracking-widest opacity-60 mb-2">Yeni Şifre (Tekrar)</label>
               <input
+                id="confirm-password"
                 type="password"
+                autoComplete="new-password"
+                minLength={8}
+                required
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 className={cn(
@@ -334,6 +388,21 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
               Bu işlem kalıcıdır ve geri alınamaz. Hesabınızla ilişkili tüm veriler tamamen silinecektir. Devam etmek istiyor musunuz?
             </p>
 
+            <label htmlFor="delete-password" className="mb-2 block text-[10px] font-bold uppercase tracking-widest opacity-60">
+              Mevcut şifre
+            </label>
+            <input
+              id="delete-password"
+              type="password"
+              autoComplete="current-password"
+              value={deletePassword}
+              onChange={(event) => setDeletePassword(event.target.value)}
+              className={cn(
+                "mb-4 w-full rounded-xl border px-4 py-3 text-sm focus:outline-none",
+                isDark ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-slate-50 text-slate-800"
+              )}
+            />
+
             {deleteError && (
               <div className="p-3 mb-4 bg-rose-500/10 text-rose-400 rounded-xl text-xs font-bold flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 shrink-0" />
@@ -344,7 +413,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
             <div className="flex gap-4">
               <button
                 disabled={isDeleting}
-                onClick={() => setShowDeleteModal(false)}
+                onClick={() => { setShowDeleteModal(false); setDeletePassword(''); setDeleteError(null); }}
                 className={cn(
                   "flex-1 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all",
                   isDark ? "bg-white/5 hover:bg-white/10 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"
@@ -354,7 +423,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
               </button>
               
               <button
-                disabled={isDeleting}
+                disabled={isDeleting || !deletePassword}
                 onClick={handleDeleteAccount}
                 className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
               >
