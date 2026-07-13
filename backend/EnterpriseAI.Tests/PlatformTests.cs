@@ -5,10 +5,26 @@ using System.Text;
 using EnterpriseAI.Application;
 using EnterpriseAI.Domain;
 using EnterpriseAI.Infrastructure;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace EnterpriseAI.Tests;
+
+public sealed class ApiFactory : WebApplicationFactory<Program>
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseEnvironment("Testing");
+        builder.ConfigureAppConfiguration((_, configuration) =>
+            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Jwt:Key"] = "test-only-dotnet-jwt-key-32-characters-minimum",
+                ["Secrets:Key"] = "test-only-connector-key-32-characters-minimum"
+            }));
+    }
+}
 
 public sealed class PlatformTests
 {
@@ -131,7 +147,7 @@ public sealed class PlatformTests
     [Fact]
     public async Task ProtectedEndpoint_RequiresToken_AndFiltersTenant()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = new ApiFactory();
         var client = factory.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/tenant-records")).StatusCode);
 
@@ -146,7 +162,7 @@ public sealed class PlatformTests
     [Fact]
     public async Task Viewer_CannotDelete()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = new ApiFactory();
         var client = factory.CreateClient();
         var login = await client.PostAsJsonAsync("/auth/login", new { email = "v@example.com", tenantId = "tenant-a", role = "Viewer" });
         var token = (await login.Content.ReadFromJsonAsync<LoginResponse>())!.access_token;
@@ -158,7 +174,7 @@ public sealed class PlatformTests
     [Fact]
     public async Task GuardrailEndpoint_RejectsInjectedRagContent()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = new ApiFactory();
         var client = factory.CreateClient();
         var login = await client.PostAsJsonAsync("/auth/login", new { email = "a@example.com", tenantId = "tenant-a", role = "Analyst" });
         var token = (await login.Content.ReadFromJsonAsync<LoginResponse>())!.access_token;
@@ -172,7 +188,7 @@ public sealed class PlatformTests
     [Fact]
     public async Task EtlEvent_CreatesNotification()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = new ApiFactory();
         var client = factory.CreateClient();
         var login = await client.PostAsJsonAsync("/auth/login", new { email = "admin@example.com", tenantId = "tenant-a", role = "Admin" });
         var token = (await login.Content.ReadFromJsonAsync<LoginResponse>())!.access_token;
@@ -189,7 +205,7 @@ public sealed class PlatformTests
     [Fact]
     public async Task RagAndReportEndpoints_WorkEndToEnd()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = new ApiFactory();
         var client = factory.CreateClient();
         var login = await client.PostAsJsonAsync("/auth/login", new { email = "analyst@example.com", tenantId = "tenant-a", role = "Analyst" });
         var token = (await login.Content.ReadFromJsonAsync<LoginResponse>())!.access_token;
@@ -212,7 +228,7 @@ public sealed class PlatformTests
     [Fact]
     public async Task MetricsEndpoint_ReturnsPrometheusText()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = new ApiFactory();
         var client = factory.CreateClient();
 
         await client.GetAsync("/health");

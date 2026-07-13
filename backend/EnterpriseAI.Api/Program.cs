@@ -9,13 +9,18 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "dev-only-super-secret-key-change-me";
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
+    throw new InvalidOperationException("Jwt:Key must be configured with at least 32 characters.");
+var connectorSecretKey = builder.Configuration["Secrets:Key"];
+if (string.IsNullOrWhiteSpace(connectorSecretKey) || connectorSecretKey.Length < 32)
+    throw new InvalidOperationException("Secrets:Key must be configured with at least 32 characters.");
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 builder.Services.AddSingleton<InMemoryPlatformStore>();
 builder.Services.AddSingleton<IImportSchemaDetector, ImportSchemaDetector>();
 builder.Services.AddSingleton<IDataQualityValidator, DataQualityValidator>();
-builder.Services.AddSingleton<IConnectionSecretProtector>(_ => new AesConnectionSecretProtector(builder.Configuration["Secrets:Key"] ?? "local-dev-secret"));
+builder.Services.AddSingleton<IConnectionSecretProtector>(_ => new AesConnectionSecretProtector(connectorSecretKey));
 builder.Services.AddSingleton<ISqlGuard, SqlGuard>();
 builder.Services.AddSingleton<IAgentGuardrail, AgentGuardrail>();
 builder.Services.AddSingleton<IKnowledgeBase, InMemoryKnowledgeBase>();
@@ -55,8 +60,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
-app.UseSwagger();
-app.UseSwaggerUI();
+if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing"))
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 app.UseCors("mobile-dev");
 app.Use(async (context, next) =>
 {
@@ -110,6 +118,7 @@ app.MapGet("/metrics", (IPlatformMetrics metrics) =>
 
 app.MapPost("/auth/login", (LoginRequest request) =>
 {
+    if (!app.Environment.IsEnvironment("Testing")) return Results.NotFound();
     var role = request.Role ?? "Admin";
     var tenantId = request.TenantId ?? "tenant-a";
     var claims = new[]

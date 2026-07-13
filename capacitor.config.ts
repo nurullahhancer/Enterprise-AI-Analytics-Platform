@@ -5,8 +5,8 @@ const config: CapacitorConfig = {
   appName: 'ReAi Asistanı',
   webDir: 'dist',
   server: {
-    androidScheme: 'http',
-    cleartext: true
+    androidScheme: 'https',
+    cleartext: false
   }
 };
 

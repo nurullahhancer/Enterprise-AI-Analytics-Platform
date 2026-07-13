@@ -1,2 +1,147 @@
-include:
-  - infra/docker-compose.yml
+name: enterprise-ai
+
+x-service-hardening: &service-hardening
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  app:
+    <<: *service-hardening
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "3010"
+      DB_PATH: data/reai.db
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-reai-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-reai-web}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ALLOW_EXTERNAL_AI_DATA: ${ALLOW_EXTERNAL_AI_DATA:-false}
+      AI_REQUESTS_PER_HOUR: ${AI_REQUESTS_PER_HOUR:-20}
+      ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
+      LOGIN_IP_MAX_ATTEMPTS: ${LOGIN_IP_MAX_ATTEMPTS:-30}
+      REST_CONNECTOR_ALLOWED_HOSTS: ${REST_CONNECTOR_ALLOWED_HOSTS:-}
+      ML_SERVICE_URL: http://ml-service:8000
+      ML_JOB_MAX_QUEUE: ${ML_JOB_MAX_QUEUE:-50}
+      ML_JOB_MAX_PER_USER: ${ML_JOB_MAX_PER_USER:-3}
+      ML_JOB_MAX_RECORDS: ${ML_JOB_MAX_RECORDS:-200}
+      ML_JOB_TTL_MS: ${ML_JOB_TTL_MS:-1800000}
+      ML_JOB_TIMEOUT_MS: ${ML_JOB_TIMEOUT_MS:-60000}
+      MAX_DATASET_STORAGE_CHARS: ${MAX_DATASET_STORAGE_CHARS:-5000000}
+      MAX_DATASET_TOTAL_CHARS: ${MAX_DATASET_TOTAL_CHARS:-20000000}
+      MAX_DATASET_COUNT: ${MAX_DATASET_COUNT:-50}
+      MAX_DATASET_CONTEXT_CHARS: ${MAX_DATASET_CONTEXT_CHARS:-100000}
+      MAX_RAG_CONTEXT_CHARS: ${MAX_RAG_CONTEXT_CHARS:-40000}
+      MAX_DOCUMENT_CHARS: ${MAX_DOCUMENT_CHARS:-500000}
+      MAX_DOCUMENT_TOTAL_CHARS: ${MAX_DOCUMENT_TOTAL_CHARS:-2000000}
+      MAX_DOCUMENT_COUNT: ${MAX_DOCUMENT_COUNT:-50}
+      AUDIT_MAX_ENTRIES_PER_USER: ${AUDIT_MAX_ENTRIES_PER_USER:-2000}
+      NOTIFICATION_MAX_ENTRIES_PER_USER: ${NOTIFICATION_MAX_ENTRIES_PER_USER:-500}
+      ML_ANALYZE_ASYNC_THRESHOLD_CHARS: ${ML_ANALYZE_ASYNC_THRESHOLD_CHARS:-1000000}
+      JSON_BODY_LIMIT: ${JSON_BODY_LIMIT:-1mb}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${APP_BIND_IP:-0.0.0.0}:${APP_PORT:-3000}:3010"
+    volumes:
+      - app-data:/app/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    networks:
+      - edge
+      - backend
+    depends_on:
+      ml-service:
+        condition: service_healthy
+    mem_limit: 1200m
+    cpus: 1.5
+    stop_grace_period: 20s
+
+  ml-service:
+    <<: *service-hardening
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    expose:
+      - "8000"
+    environment:
+      ML_CACHE_MAX_ENTRIES: ${ML_CACHE_MAX_ENTRIES:-256}
+      ML_INTERNAL_API_KEY: ${ML_INTERNAL_API_KEY:-}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    networks:
+      - backend
+    mem_limit: 1400m
+    cpus: 1.5
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  app-test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      NODE_ENV: test
+      DB_PATH: ":memory:"
+    command: ["npm", "test"]
+
+  ml-test:
+    profiles: ["test"]
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+      target: test
+    command: ["sh", "-c", "ruff check app tests && pytest -q tests"]
+
+  backend-test:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      dockerfile: EnterpriseAI.Api/Dockerfile
+      target: test
+    environment:
+      ASPNETCORE_ENVIRONMENT: Testing
+      Jwt__Key: test-only-dotnet-jwt-key-32-characters-minimum
+      Secrets__Key: test-only-connector-key-32-characters-minimum
+    command: ["dotnet", "test", "EnterpriseAIAnalytics.sln", "--configuration", "Release"]
+
+  reference-frontend-test:
+    profiles: ["test"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: build
+    command: ["npm", "run", "lint"]
+
+volumes:
+  app-data:
+
+networks:
+  edge:
+  backend:
+    internal: true

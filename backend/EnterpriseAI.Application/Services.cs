@@ -83,23 +83,25 @@ public sealed class AesConnectionSecretProtector : IConnectionSecretProtector
 
     public string Protect(string plaintext)
     {
-        using var aes = Aes.Create();
-        aes.Key = _key;
-        aes.GenerateIV();
-        using var encryptor = aes.CreateEncryptor();
-        var bytes = Encoding.UTF8.GetBytes(plaintext);
-        var cipher = encryptor.TransformFinalBlock(bytes, 0, bytes.Length);
-        return Convert.ToBase64String(aes.IV.Concat(cipher).ToArray());
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var plain = Encoding.UTF8.GetBytes(plaintext);
+        var cipher = new byte[plain.Length];
+        var tag = new byte[16];
+        using var aes = new AesGcm(_key, tag.Length);
+        aes.Encrypt(nonce, plain, cipher, tag);
+        return Convert.ToBase64String(new byte[] { 1 }.Concat(nonce).Concat(tag).Concat(cipher).ToArray());
     }
 
     public string Unprotect(string ciphertext)
     {
         var bytes = Convert.FromBase64String(ciphertext);
-        using var aes = Aes.Create();
-        aes.Key = _key;
-        aes.IV = bytes.Take(16).ToArray();
-        using var decryptor = aes.CreateDecryptor();
-        var plain = decryptor.TransformFinalBlock(bytes, 16, bytes.Length - 16);
+        if (bytes.Length < 30 || bytes[0] != 1) throw new CryptographicException("Unsupported encrypted secret format.");
+        var nonce = bytes.AsSpan(1, 12);
+        var tag = bytes.AsSpan(13, 16);
+        var cipher = bytes.AsSpan(29);
+        var plain = new byte[cipher.Length];
+        using var aes = new AesGcm(_key, tag.Length);
+        aes.Decrypt(nonce, cipher, tag, plain);
         return Encoding.UTF8.GetString(plain);
     }
 }
