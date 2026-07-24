@@ -50,7 +50,7 @@ export function decryptConnectorConfig(value: string): string {
 export function publicConnectorConfig(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const config = value as Record<string, unknown>;
-  const allowed = ['url', 'method', 'host', 'port'];
+  const allowed = ['url', 'method', 'host', 'port', 'database', 'username', 'sslMode'];
   return Object.fromEntries(
     allowed
       .filter((key) => typeof config[key] === 'string' || typeof config[key] === 'number')

@@ -80,6 +80,12 @@ export interface DashboardWidget {
   score: number; confidence?: number; data: unknown;
 }
 
+export interface DashboardTemplate {
+  key: 'retail' | 'finance' | 'hr' | 'operations' | 'general';
+  label: string;
+  reason: string;
+}
+
 export interface AutoInsights {
   generatedAt: string;
   datasetType: string | null;
@@ -144,8 +150,10 @@ function pickDateColumn(headers: string[], body: string[][]) {
 function selectTargetColumn(headers: string[], body: string[][], filename = "dataset.csv") {
   const numericColumns = headers
     .map((header, i) => {
-      const values = body.map((r) => toNumber(r[i]));
+      const rawValues = body.map((r) => r[i] ?? "");
+      const values = rawValues.map((value) => toNumber(value));
       const parsedValues = values.filter((v): v is number => v !== null);
+      const columnType = inferColumnKind(header, rawValues, parsedValues);
       const nonZeroCount = parsedValues.filter((v) => v !== 0).length;
       const mean = parsedValues.length === 0 ? 0 : parsedValues.reduce((s, v) => s + v, 0) / parsedValues.length;
       const variance = parsedValues.length === 0 ? 0 : parsedValues.reduce((s, v) => s + (v - mean) ** 2, 0) / parsedValues.length;
@@ -157,9 +165,9 @@ function selectTargetColumn(headers: string[], body: string[][], filename = "dat
       const datePenalty = /date|tarih|zaman|time/.test(nh) ? -5 : 0;
       const coverage = body.length === 0 ? 0 : parsedValues.length / body.length;
       const score = totalValueHint + unitPriceHint + weakHint + idPenalty + datePenalty + coverage + (nonZeroCount > 0 ? 1 : -3) + (variance > 0 ? 1 : -2);
-      return { header, index: i, parsedValues, nonZeroCount, missingCount: body.length - parsedValues.length, zeroCount: parsedValues.length - nonZeroCount, score: Math.round(score * 1000) / 1000 };
+      return { header, index: i, parsedValues, nonZeroCount, missingCount: body.length - parsedValues.length, zeroCount: parsedValues.length - nonZeroCount, score: Math.round(score * 1000) / 1000, columnType };
     })
-    .filter((c) => c.parsedValues.length > 0)
+    .filter((c) => (c.columnType === "numeric" || c.columnType === "currency") && c.parsedValues.length > 0)
     .sort((a, b) => b.score - a.score);
 
   const best = numericColumns[0];
@@ -372,11 +380,9 @@ export function buildMlInsights(fileContent: string, filename = "dataset.csv"): 
 export function buildAutomaticInsights(profile: DataProfile, insights: MlInsightsResult, summary: DatasetSummary): AutoInsights {
   const items: AutoInsights['items'] = [];
   const topGroup = [...summary.chartData].sort((a, b) => b.ciro - a.ciro)[0];
-  const forecastPeak = [...insights.forecast.data].sort((a: any, b: any) => b.predicted - a.predicted)[0] as any;
   const riskyColumns = profile.columns.filter((c) => c.nullRate >= 20).slice(0, 3);
   if (topGroup) items.push({ title: "En yüksek değer öne çıktı", description: `${topGroup.name} grubu ${Math.round(topGroup.ciro).toLocaleString("tr-TR")} değer ile ilk sırada.`, severity: "success", score: 0.95 });
   if (insights.anomalies.data.length > 0) { const a = insights.anomalies.data[0] as any; items.push({ title: "Aykırı değer yakalandı", description: `${a.label} normal dağılımdan ayrışıyor.`, severity: "warning", score: 0.94 }); }
-  if (forecastPeak) items.push({ title: "Tahmin sinyali hazır", description: `Model ${forecastPeak.row} için en yüksek tahmini üretiyor. Heuristik uyum skoru %${Math.round(insights.forecast.confidence * 100)}.`, severity: "info", score: insights.forecast.confidence });
   if (insights.segments.data.length >= 2) { const s = [...insights.segments.data].sort((a: any, b: any) => b.averageValue - a.averageValue)[0] as any; items.push({ title: "Segment farkı oluştu", description: `${s.label} segmenti ortalama değer açısından ayrışıyor.`, severity: "info", score: insights.segments.confidence }); }
   if (summary.grossMargin !== 0 && summary.costColumn !== null) items.push({ title: "Kârlılık oranı hesaplandı", description: `Brüt kâr oranı yaklaşık %${summary.grossMargin.toFixed(1)}.`, severity: summary.grossMargin < 20 ? "warning" : "success", score: summary.grossMargin < 20 ? 0.81 : 0.78 });
   if (riskyColumns.length > 0) items.push({ title: "Veri kalitesi kontrolü önerilir", description: `${riskyColumns.map((c) => c.name).join(", ")} kolonlarında boş değer oranı yüksek.`, severity: "warning", score: 0.86 });
@@ -384,15 +390,32 @@ export function buildAutomaticInsights(profile: DataProfile, insights: MlInsight
   return { generatedAt: new Date().toISOString(), datasetType: profile.datasetType, rowCount: profile.rowCount, summary: `${profile.rowCount} satır ve ${profile.columnCount} kolon üzerinden ${Math.min(items.length, 5)} otomatik içgörü üretildi.`, items: items.sort((a, b) => b.score - a.score).slice(0, 5) };
 }
 
+export function detectDashboardTemplate(profile: DataProfile): DashboardTemplate {
+  const headers = profile.columns.map((column) => normalizeLabel(column.name)).join(' ');
+  const candidates: Array<{ key: DashboardTemplate['key']; label: string; pattern: RegExp; reason: string }> = [
+    { key: 'retail', label: 'Perakende ve E-ticaret', pattern: /urun|product|siparis|order|stok|inventory|iade|return|sepet|cart/, reason: 'Ürün, sipariş, stok veya iade alanları algılandı.' },
+    { key: 'finance', label: 'Finans ve Nakit Akışı', pattern: /nakit|cash|fatura|invoice|tahsilat|bakiye|balance|butce|budget|maliyet|cost/, reason: 'Finans, tahsilat, bütçe veya maliyet alanları algılandı.' },
+    { key: 'hr', label: 'İnsan Kaynakları', pattern: /personel|employee|calisan|departman|department|turnover|attrition|ise alim|hiring/, reason: 'Personel, departman veya çalışan kaybı alanları algılandı.' },
+    { key: 'operations', label: 'Operasyon ve Üretim', pattern: /ekipman|equipment|makine|machine|ariza|failure|tedarik|supplier|uretim|production/, reason: 'Ekipman, üretim veya tedarik alanları algılandı.' },
+  ];
+  const match = candidates.find((candidate) => candidate.pattern.test(headers));
+  return match || { key: 'general', label: 'Genel Kurumsal Analitik', reason: 'Genel tablo yapısı kullanıldı.' };
+}
+
 export function recommendWidgets(profile: DataProfile, insights: MlInsightsResult, summary: DatasetSummary): DashboardWidget[] {
+  const template = detectDashboardTemplate(profile);
+  const labels = {
+    retail: { total: 'Toplam Satış Değeri', risk: 'İade / Kayıp Oranı', distribution: 'Ürün ve Kanal Dağılımı', top: 'En Yüksek Satışlar' },
+    finance: { total: 'Toplam Finansal Hacim', risk: 'Tahsilat / Risk Oranı', distribution: 'Finansal Dağılım', top: 'En Yüksek Tutarlar' },
+    hr: { total: 'Toplam Ölçülen Değer', risk: 'Personel Kayıp Oranı', distribution: 'Departman Dağılımı', top: 'Öne Çıkan Gruplar' },
+    operations: { total: 'Toplam Operasyon Değeri', risk: 'Arıza / Risk Oranı', distribution: 'Operasyon Dağılımı', top: 'En Yüksek Operasyonlar' },
+    general: { total: 'Toplam Değer', risk: 'Risk / Kayıp Oranı', distribution: 'Kategori Bazlı Değer Dağılımı', top: 'En Yüksek Değerler' }
+  }[template.key];
   const widgets: DashboardWidget[] = [
-    { id: "kpi-revenue", type: "kpi", title: "Toplam Değer", score: summary.totalRevenue > 0 ? 0.96 : 0.55, data: { value: summary.totalRevenue, helper: `${summary.rowCount} satır, ${summary.columnCount} kolon`, format: "currency" } },
-    { id: "kpi-risk", type: "kpi", title: "Risk / Kayıp Oranı", score: summary.churnRate > 0 ? 0.9 : 0.5, data: { value: summary.churnRate, helper: "Yüklenen veriden otomatik hesaplandı", format: "percent" } },
-    { id: "trend", type: "trend", title: `${summary.regionColumn || "Kategori"} Bazlı Değer Dağılımı`, score: summary.chartData.length > 1 ? 0.88 : 0.35, data: summary.chartData },
-    { id: "forecast", type: "forecast", title: "ML Tahmin Özeti", score: insights.forecast.confidence > 0 ? 0.92 : 0, confidence: insights.forecast.confidence, data: insights.forecast },
-    { id: "anomaly", type: "anomaly", title: "Anomali Uyarısı", score: insights.anomalies.data.length > 0 ? 0.94 : 0, confidence: insights.anomalies.confidence, data: insights.anomalies },
-    { id: "segments", type: "segment", title: "Segment Analizi", score: insights.segments.data.length >= 2 ? 0.82 : 0, confidence: insights.segments.confidence, data: insights.segments },
-    { id: "top-n", type: "topN", title: "En Yüksek Değerler", score: summary.chartData.length > 0 ? 0.76 : 0, data: [...summary.chartData].sort((a, b) => b.ciro - a.ciro).slice(0, 5) },
+    { id: "kpi-revenue", type: "kpi", title: labels.total, score: summary.totalRevenue > 0 ? 0.96 : 0.55, data: { value: summary.totalRevenue, helper: `${summary.rowCount} satır, ${summary.columnCount} kolon`, format: "currency" } },
+    { id: "kpi-risk", type: "kpi", title: labels.risk, score: summary.churnRate > 0 ? 0.9 : 0.5, data: { value: summary.churnRate, helper: "Yüklenen veriden otomatik hesaplandı", format: "percent" } },
+    { id: "trend", type: "trend", title: `${summary.regionColumn || "Kategori"} · ${labels.distribution}`, score: summary.chartData.length > 1 ? 0.88 : 0.35, data: summary.chartData },
+    { id: "top-n", type: "topN", title: labels.top, score: summary.chartData.length > 0 ? 0.76 : 0, data: [...summary.chartData].sort((a, b) => b.ciro - a.ciro).slice(0, 5) },
     { id: "profile", type: "profile", title: "Veri Profili", score: profile.columns.length > 0 ? 0.72 : 0, data: profile }
   ];
   return widgets.filter((w) => w.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);

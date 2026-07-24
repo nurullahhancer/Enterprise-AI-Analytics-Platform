@@ -115,11 +115,11 @@ Admin hesabı oluşmadan public registration'ı açık bırakmayın.
 |---|---|---|
 | `AI_PROVIDER` | `auto` | `nvidia`, `gemini` veya anahtara göre otomatik seçim |
 | `NVIDIA_API_KEY` | boş | NVIDIA NIM/OpenAI uyumlu sohbet servisi anahtarı |
-| `NVIDIA_AI_MODEL` | `deepseek-ai/deepseek-v4-pro` | NVIDIA model adı |
+| `NVIDIA_AI_MODEL` | `meta/llama-3.1-8b-instruct` | NVIDIA model adı |
 | `GEMINI_API_KEY` | boş | Geriye dönük Gemini servis anahtarı |
 | `GEMINI_AI_MODEL` | `gemini-2.5-flash` | Gemini model adı |
 | `ALLOW_EXTERNAL_AI_DATA` | `false` | Müşteri verisinin dış AI servisine gönderimine açık yönetici izni |
-| `AI_REQUEST_TIMEOUT_MS` | `120000` | Harici AI istek zaman aşımı |
+| `AI_REQUEST_TIMEOUT_MS` | `30000` | Harici AI istek zaman aşımı |
 | `AI_MAX_OUTPUT_TOKENS` | `1024` | Yanıt token limiti |
 
 Servis anahtarı ve `ALLOW_EXTERNAL_AI_DATA=true` birlikte etkin değilse AI çağrısı yapılmaz. Müşteri sözleşmesi, veri sınıflandırması ve sağlayıcı koşulları incelenmeden harici AI sağlayıcısına gerçek müşteri verisi göndermeyin.
@@ -128,15 +128,17 @@ Servis anahtarı ve `ALLOW_EXTERNAL_AI_DATA=true` birlikte etkin değilse AI ça
 
 `REST_CONNECTOR_ALLOWED_HOSTS`, şema veya yol içermeyen tam hostname'lerden oluşan virgülle ayrılmış listedir. Örneğin yalnızca kuruma ait API hostları eklenmelidir. Wildcard, IP, localhost, `.local` ve `.internal` hostları kullanmayın.
 
+`SQL_CONNECTOR_ALLOWED_HOSTS` salt-okunur PostgreSQL konektörlerinin erişebileceği tam hostname listesidir. Her kaynakta yalnızca SELECT yetkisi verilmiş ayrı bir veritabanı kullanıcısı oluşturun; uygulama ayrıca sorguyu salt-okunur transaction, 20 saniye ve 10.000 satır sınırıyla çalıştırır. Platformun kendi `postgres` servisini bu listeye eklemeyin.
+
 Production konnektörü yalnızca HTTPS GET/JSON kullanır; redirect, private/link-local hedef, 10 saniyeyi aşan istek ve 2 MB'tan büyük cevap reddedilir.
 
 ### 3.6 Limitler ve internal ML
 
 | Değişken | Varsayılan | Açıklama |
 |---|---:|---|
-| `MAX_DATASET_STORAGE_CHARS` | 5.000.000 | SQLite'a yazılan bir CSV için karakter sınırı; üst kod sınırı 10.000.000 |
-| `MAX_DATASET_TOTAL_CHARS` / `MAX_DATASET_COUNT` | 20.000.000 / 50 | Kullanıcı başına toplam CSV karakteri ve dosya sayısı |
+| `MAX_DATASET_COUNT` | 50 | Kullanıcı başına veri kaynağı sayısı |
 | `MAX_DATASET_CONTEXT_CHARS` | 100.000 | AI prompt'una alınan veri bağlamı |
+| `DATASET_UPLOAD_TMP_DIR` | `/app/data/dataset-uploads` | Büyük veri yüklemelerinin işlendiği geçici disk dizini |
 | `MAX_RAG_CONTEXT_CHARS` | 40.000 | Doküman destekli AI bağlamı |
 | `MAX_DOCUMENT_CHARS` | 500.000 | Ayrıştırılmış doküman metni sınırı; üst kod sınırı 1.000.000 |
 | `MAX_DOCUMENT_TOTAL_CHARS` / `MAX_DOCUMENT_COUNT` | 2.000.000 / 50 | Kullanıcı başına toplam doküman metni ve dosya sayısı |
@@ -155,7 +157,7 @@ Production konnektörü yalnızca HTTPS GET/JSON kullanır; redirect, private/li
 
 `PORT=3010`, `DB_PATH=data/reai.db` ve `ML_SERVICE_URL=http://ml-service:8000` Compose içinde production topolojisine sabitlenmiştir. Normal VDS kurulumunda değiştirmeyin.
 
-Login/AI sayaçları ve ML kuyruğu process-içidir; restart ile sıfırlanır ve birden çok replica arasında paylaşılmaz. Kuyruk doluluğu `429 ML_QUEUE_FULL` üretir. Audit/bildirim kayıtları otomatik silinmez; kota dolduğunda ana iş çoğunlukla devam eder, yeni ikincil kayıt warning ile atlanır. Operatör kota uyarısı, onaylı arşiv ve retention prosedürü tanımlamalıdır; kullanıcı verisini onaysız silmeyin.
+Login/AI sayaçları ve ML kuyruğu process-içidir; restart ile sıfırlanır ve birden çok replica arasında paylaşılmaz. Kuyruk doluluğu `429 ML_QUEUE_FULL` üretir. Kurum yöneticisi 30-3650 günlük veri saklama politikasını etkinleştirebilir; günlük zamanlayıcı yalnız analiz/KPI/senkronizasyon/bildirim/audit geçmişini temizler, ham veri ve dokümanları otomatik silmez. Kota ve retention alarmları operasyon ekibi tarafından izlenmelidir.
 
 Dashboard, özet, ETL, ML, rapor ve veri destekli AI kullanıcının kayıtlı bütün CSV'lerini `kaynak_dosya` bilgisiyle birleştirir. “Aktif” işareti analiz filtresi değildir. ETL çıktıları aynı havuza eklendiği için orijinal ve türetilmiş satırların çift sayılmasını ürün/operasyon katmanı yönetmelidir.
 
@@ -392,27 +394,18 @@ ss -lntp
 
 HTTP-01 doğrulaması ve yenileme için port 80'i tamamen kapatmayın; normal kullanıcı istekleri HTTPS'e yönlenir. `nginx -t` başarısızsa reload yapmayın. Sertifika süresi kısa olduğundan timer başarısızlığı ve yaklaşan sona erme için dış izleme/alarm kurulmalıdır. IP veya Nginx yolu değişirse önce yeni sertifikayı ve yapılandırmayı doğrulayın; çalışan sertifikayı silmeyin.
 
-## 12. SQLite yedekleme
+## 12. PostgreSQL yedekleme ve geri yükleme testi
 
-Tutarlı yedek için app container'ını kısa süreli ve kontrollü durdurun. Normal `SIGTERM` akışı WAL checkpoint + database close yapar; exit code `0` doğrulanmadan yalnız ana DB dosyasını kopyalamayın. Aşağıdaki prosedür veri silmez ve olası DB/WAL/SHM dosyalarını birlikte saklar:
+Production Compose, yönetim rolüyle her gün custom-format `pg_dump` alan `postgres-backup` servisini içerir. Dump önce `pg_restore --list` ile doğrulanır, SHA-256 dosyası yazılır ve varsayılan olarak 14 gün saklanır. Uygulamanın durdurulması gerekmez:
 
 ```bash
 cd /root/Enterprise-AI-Analytics-Platform
-mkdir -p backups
-chmod 700 backups
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-BACKUP_DIR="./backups/app-data-${STAMP}"
-mkdir -m 700 "$BACKUP_DIR"
-docker compose stop app
-test "$(docker inspect --format '{{.State.ExitCode}}' enterprise-ai-app-1)" = "0"
-docker compose cp app:/app/data/. "$BACKUP_DIR/"
-find "$BACKUP_DIR" -type f -exec chmod 600 {} +
-docker compose start app
-sha256sum "$BACKUP_DIR"/*
-curl -fsS http://127.0.0.1:3000/api/health
+docker compose up -d postgres-backup
+docker compose logs --tail=20 postgres-backup
+docker compose --profile maintenance run --rm postgres-restore-check
 ```
 
-`sqlite3` CLI bulunan güvenilir bakım hostunda `sqlite3 "$BACKUP_DIR/reai.db" 'PRAGMA integrity_check;'` sonucu `ok` olmalıdır. CLI yoksa snapshot'ı izole test volume'üne restore edip aynı kontrolü yapın. Yedeği farklı fiziksel sistemde şifreli olarak saklayın ve restore testini periyodik olarak ayrı bir ortamda yapın. `.env`/secret'lar veritabanı yedeğine gömülü değildir; onları ayrı secret vault ve erişim politikasıyla koruyun.
+Restore-check en güncel checksum'u doğrular, production'dan farklı geçici `reai_restore_check` veritabanı oluşturur, dump'ı yükler, çekirdek tabloları sorgular ve geçici veritabanını kaldırır. Production veritabanına yazmaz. `postgres-backups` volume'ü aynı VDS üzerindedir; felaket kurtarma için dump'ları ayrıca farklı fiziksel sistemde şifreli saklayın. `.env`/secret'lar veritabanı yedeğine gömülü değildir; ayrı secret vault ve erişim politikasıyla korunmalıdır.
 
 Önerilen asgari politika:
 
@@ -422,27 +415,27 @@ curl -fsS http://127.0.0.1:3000/api/health
 - Aylık izole restore testi
 - Yedek checksum ve tarih envanteri
 
-### Restore
+### Gerçek production restore
 
 Restore mevcut production veritabanını değiştiren riskli bir işlemdir. Açık bakım onayı, doğrulanmış backup checksum'u ve ayrıca mevcut verinin safety backup'ı olmadan uygulanmamalıdır.
 
 Onaylı bakımda yüksek seviye sıra:
 
 1. App'i durdurun.
-2. Mevcut DB ve varsa WAL/SHM dosyalarını silmeden timestamp'li safety kopyaya taşıyın.
-3. Seçilen `app-data-*` snapshot'ındaki DB ve eşlik eden WAL/SHM dosyalarını aynı set olarak `app-data` volume'üne kopyalayın.
-4. Dosya sahibini container `node` kullanıcısı ve iznini `0600` yapın.
-5. App'i başlatıp health, giriş ve veri bütünlüğü smoke testlerini çalıştırın.
+2. Mevcut veritabanının yeni bir safety dump'ını alın ve checksum'unu doğrulayın.
+3. Hedef dump'ı yeni/boş bir PostgreSQL veritabanına `pg_restore --no-owner --no-acl` ile yükleyin.
+4. Uygulama bağlantısını yalnız doğrulanan hedef veritabanına yönlendirin; uygulama idempotent şemayı tamamlasın.
+5. App'i başlatıp health, giriş, tenant izolasyonu ve veri bütünlüğü smoke testlerini çalıştırın.
 6. Safety kopyayı doğrulama süresi bitmeden kaldırmayın.
 
-Restore komutları volume/proje adına bağlı olduğundan bakım anında `docker compose ps`, `docker volume ls` ve yedek checksum'u doğrulanarak hazırlanmalıdır. Yanlış volume'e otomatik restore uygulanmamalıdır.
+Production veritabanını drop/overwrite eden komutlar bu otomatik scriptlerde yoktur. Gerçek restore için hedef adları bakım anında doğrulanmalı ve açık onay alınmalıdır.
 
 ## 13. Güncelleme
 
 1. Kullanıcı trafiğini/maintenance penceresini planlayın.
 2. Git çalışma ağacındaki yerel kullanıcı değişikliklerini inceleyin; silmeyin veya ezmeyin.
 3. Mevcut commit'i ve image durumunu kaydedin.
-4. SQLite yedeği alın.
+4. PostgreSQL safety dump'ı alın ve restore-check çalıştırın.
 5. Yeni commit/tag'i fast-forward veya ayrı release checkout ile alın.
 6. Test profile'ını çalıştırın.
 7. Image'ları build edip servisleri yeniden oluşturun.
@@ -596,9 +589,9 @@ SQLite native modülü için production Dockerfile Debian Trixie tabanlıdır. B
 - [ ] Harici AI kapalı veya açık müşteri onayıyla NVIDIA/Gemini üzerinde yapılandırılmış
 - [ ] REST allowlist yalnızca gerekli hostları içeriyor
 - [ ] Container'lar non-root/healthy ve restart policy etkin
-- [ ] Restart sonrasında SQLite verisi korunuyor
-- [ ] Güncel SQLite yedeği ve off-site kopya doğrulandı
-- [ ] Audit/bildirim kota uyarısı, arşiv ve onaylı retention prosedürü tanımlandı
+- [ ] Restart sonrasında PostgreSQL verisi korunuyor
+- [ ] Güncel PostgreSQL yedeği, restore-check ve off-site şifreli kopya doğrulandı
+- [ ] Kurum retention politikası, Prometheus kuralları ve operasyon alarm yönlendirmesi doğrulandı
 - [ ] Domain varsa DNS, TLS, HTTPS redirect ve HSTS doğrulandı
 - [ ] Mobil teslim varsa trusted HTTPS, `https://localhost` CORS, cihaz E2E ve signing doğrulandı
 - [ ] Loglarda kritik hata veya hassas veri yok

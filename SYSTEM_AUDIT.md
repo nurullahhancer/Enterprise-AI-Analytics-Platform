@@ -1,5 +1,7 @@
 # Sistem Denetimi ve İyileştirme Raporu
 
+> **18 Temmuz 2026 ürünleştirme eki:** Bu belgenin aşağıdaki 13 Temmuz tarihli ana gövdesi ilk denetimin tarihsel kaydıdır. Güncel kanonik sistem SQLite yerine PostgreSQL 17 ve organizasyon bazlı forced RLS kullanır. CSV/JSON/REST veri alımı, kullanıcı tarafından seçilen analiz kapsamı, şema uyumluluk kontrolü, kaynak lineage'ı, kalıcı `analysis_runs`, kronolojik holdout metrikleri ve tahmin aralıkları içeren Analiz Stüdyosu, doğrulanmış sonuçlardan AI yorumu ve analiz koşusuna bağlı CSV raporu eklenmiştir. REST ingest aynı kaynağın anlık görüntüsünü günceller; ETL kaynaklarını kapsamdan çıkararak çift sayımı önler. Son doğrulama: kök lint/build başarılı, Vitest/Supertest **38/38**, FastAPI Ruff başarılı ve pytest **19/19**, .NET referans **15/15**, Next.js referans lint/build başarılı. Güncel kurulum ve kapsam sınırlarının kaynağı `README.md` ve çalışan `docker-compose.yml` dosyalarıdır.
+
 **Proje:** Enterprise AI Analytics Platform
 
 **Proje dizini:** `/root/Enterprise-AI-Analytics-Platform`
@@ -154,7 +156,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 
 ### 7.3 Veri ve analiz
 
-1. `admin` veya `analyst`, en fazla 10 MB ve yapılandırılmış karakter sınırı içinde bir CSV yükler.
+1. `admin` veya `analyst`, CSV ya da JSON veri dosyasını boyut sınırı olmadan yükler; aktarım RAM tabanlı `/tmp` yerine kalıcı uygulama diski altındaki geçici dizine yazılır ve işlem sonunda silinir.
 2. Sunucu dosyanın boş/ikili olmadığını ve en az bir başlık/veri satırı içerdiğini doğrular.
 3. Yüklenen veri kullanıcıya bağlanır; yeni dosya legacy/primary aktif işaretini alır.
 4. Dashboard, özet, ETL, ML, rapor ve veri destekli AI yalnız oturum sahibinin bütün CSV'lerini `kaynak_dosya` kolonu ile birleştirir; aktif işareti analiz filtresi değildir.
@@ -235,7 +237,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 
 ### 9.3 Veri, ETL ve rapor
 
-- Yalnızca CSV kabulü, 10 MB upload sınırı, karakter limiti, içerik ve minimum satır/sütun doğrulaması eklendi.
+- CSV/JSON kabulü, RAM tabanlı `/tmp` yerine kalıcı uygulama diski üzerinden sınırsız yükleme, içerik ve minimum satır/sütun doğrulaması eklendi.
 - Kullanıcı başına varsayılan 50 CSV/20 milyon karakter ve 50 doküman/2 milyon karakter kotası, transaction içindeki eşzamanlılık güvenli kontrollerle eklendi.
 - Güvenlik bildirimi bulunan `xlsx` bağımlılığı kaldırıldı.
 - Sahte sabit ETL çıktısı gerçek CSV dönüşümüne çevrildi; sonuç orijinali ezmeden yeni veri seti oluşturur.
@@ -286,7 +288,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 | JWT | Secret zorunlu, HS256 allowlist, issuer/audience/JTI/8 saat/token version |
 | Authentication brute force | 5 deneme / 15 dakika / IP+e-posta (process içi) |
 | Authorization / IDOR | Rol kontrolleri ve sorgularda oturum sahibinin e-postası |
-| SQL injection | Değerler parametreli SQLite sorguları ile bağlanır |
+| SQL injection | Uygulama sorguları parametrelidir; harici PostgreSQL konnektörü yalnız doğrulanmış SELECT/WITH sorgusunu read-only transaction içinde çalıştırır |
 | Command injection | Kullanıcı girdisi shell komutuna aktarılmaz |
 | XSS | React escaping + CSP; kullanıcı içeriği doğrudan HTML olarak işlenmez |
 | CSRF | Cookie tabanlı auth yok; Authorization Bearer kullanılır; CORS allowlist uygulanır |
@@ -306,7 +308,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 - Login rate-limit bellektedir; container yeniden başladığında sayaç sıfırlanır ve birden çok replica arasında paylaşılmaz.
 - Bearer token tarayıcı saklama alanında tutulur; başarılı bir XSS token etkisi yaratabilir. CSP riski azaltır fakat güvenli frontend geliştirme disiplini sürmelidir.
 - Audit kayıtları kullanıcıya göre ayrıdır fakat kriptografik olarak değiştirilemez/harici SIEM'e aktarılmış değildir.
-- Audit/bildirim otomatik retention silmesi yoktur; kota dolunca yeni ikincil kayıtlar durur. Onaylı arşiv/retention ve alarm prosedürü gerekir.
+- Kurum bazlı retention zamanlayıcısı operasyon geçmişini 30-3650 günlük politikayla temizleyebilir; ham dataset/doküman silme ve off-site arşiv hâlâ açık insan onayı gerektirir.
 - Şifreleme anahtarı kaybedilirse mevcut konnektör ayarları çözülemez; key backup/rotation prosedürü operatör sorumluluğundadır.
 - IP sertifikası yaklaşık altı günlük kısa ömre sahiptir; Certbot timer/deploy hook çalışmazsa hızlı sertifika süresi dolma riski vardır ve dış alarm gerekir.
 - Host Ubuntu kurulumu eski paket seviyesindedir: simülasyonda 306 yükseltilebilir ve 14 bekletilen paket görülmüştür; OpenSSL, OpenSSH, glibc ve systemd gibi kritik paketler bakım penceresi, VDS snapshot'ı ve reboot/SSH geri dönüş planıyla güncellenmelidir.
@@ -318,7 +320,7 @@ Formal, sürüm numaralı bir migration framework'ü henüz yoktur. Bu nedenle s
 |---|---|---|
 | Kök TypeScript lint/type-check | Başarılı | `tsc --noEmit` |
 | Kök production build | Başarılı | Vite SPA + esbuild Express bundle |
-| Kök Vitest/Supertest | **20/20 başarılı** | Health, kayıt/giriş/çıkış token iptali, geçerli-geçersiz bootstrap token, `/me`, viewer RBAC, multipart CSV CRUD/sıralama/aktif güncelleme, atomik son-admin/eşzamanlı SQLite yazımı, gerçek ETL ve dört rapor, CSV formül koruması, kullanıcı izolasyonu, birleşik çoklu dataset, forecast/profile |
+| Kök Vitest/Supertest | **67/67 başarılı** | Health/auth, tenant izolasyonu/RBAC, veri/ETL/rapor/ML, konektör zamanlama ve PostgreSQL sorgu güvenliği, KPI, faturalama, bildirim, dashboard tercihleri ve veri yönetişimi |
 | Kök npm audit | Başarılı | Yüksek/kritik bulgu yok; tüm npm audit sonucu 0 bulgu |
 | FastAPI Ruff | Başarılı | `app` ve `tests` statik kontrolü |
 | FastAPI pytest | **16/16 başarılı** | Health, predict, anomaly, cluster, analyze, aşırı sütun limiti ve tenant/parametre/period duyarlı cache anahtarı |
@@ -367,7 +369,7 @@ Gerçek e-posta, SMS, ödeme veya ücretli AI çağrısı yapılmadı. Harici NV
 
 1. Root-only handoff dosyasındaki geçici test admin parolası ilk girişte değiştirilmeli; gerçek müşteri açılışında kurumsal isim/e-posta hesabı oluşturulup test hesabının korunması veya silinmesi açıkça kararlaştırılmalıdır.
 2. Kısa ömürlü IP sertifikasının yenileme timer'ı ve sona erme tarihi dış izlemeyle alarm altına alınmalıdır.
-3. Gerçek SQLite volume yedekleme takvimi ve off-site saklama uygulanmalıdır.
+3. Otomatik PostgreSQL yedeği ve izole restore-check kuruludur; aynı VDS dışındaki şifreli yedek hedefi ayrıca yapılandırılmalıdır.
 4. VDS snapshot/console erişimi bulunan planlı bakımda bekleyen Ubuntu güvenlik güncellemeleri uygulanmalı, reboot sonrası SSH/Nginx/Docker/HTTPS doğrulanmalıdır.
 5. Sağlayıcı firewall veya onaylı UFW politikasıyla yalnız gerekli 22/80/443 portları izinli tutulmalıdır; SSH erişimini riske atan uzaktan firewall değişikliği yapılmamalıdır.
 
@@ -377,15 +379,15 @@ Gerçek e-posta, SMS, ödeme veya ücretli AI çağrısı yapılmadı. Harici NV
 - In-memory login limiter ve ML iş kuyruğu replica/yeniden başlatma dayanımlı değildir; Redis benzeri ortak katman gerekir.
 - Varsayılan 20 milyon karakterlik CSV havuzu dashboard/rapor/forecast isteklerinde yeniden parse edilir; global ağır endpoint concurrency limiti/load testi yoktur. Eşzamanlı büyük isteklerde CPU/RAM baskısı riski kalır.
 - “Aktif” işareti birleşik analiz filtresi değildir; ETL çıktısı da havuza eklendiğinden seçim/lineage özelliği gelene kadar çift sayım operasyonel olarak yönetilmelidir.
-- Audit/bildirim kotası dolunca yeni ikincil kayıtlar silinmez fakat yazılamaz; alarm, arşiv ve kullanıcı onaylı retention prosedürü henüz dış operasyon işidir.
+- Audit/bildirim ve diğer tarihli operasyon geçmişi kurum retention politikasına bağlandı; ham veri arşivi/silmesi açık kullanıcı onayı gerektiren dış operasyon işidir.
 - Formal migration sürüm tablosu/rollback script'i yoktur.
-- Organizasyon üyeliği, tenant yöneticisi ve tenantlar arası veri paylaşımı tamamlanmamıştır; tenant oluşturma endpoint'i bilinçli olarak `501` döndürür.
-- Parola sıfırlama, e-posta doğrulama ve MFA yoktur; e-posta sağlayıcısı olmadan güvenli biçimde tamamlanamaz.
-- SQL konnektörü devre dışıdır.
+- Tenant üyeliği ve rol yönetimi tamamlanmıştır; ek tenant oluşturma endpoint'i ürün politikası gereği bilinçli olarak `501` döndürür.
+- Parola sıfırlama ve e-posta doğrulama akışları hazırdır; gerçek gönderim Resend anahtarları verilene kadar etkinleştirilemez. MFA kapsam dışıdır.
+- PostgreSQL konnektörü salt-okunur kullanıcı, exact-host allowlist, sorgu doğrulama, timeout ve sonuç limitleriyle etkindir.
 - Qdrant/embedding tabanlı semantik RAG yoktur; yerel metin parçası seçimi kullanılır.
-- ML regresyon metrikleri giriş/eğitim verisi üzerinde in-sample hesaplanır (`testRows=0`); “heuristik uyum” holdout doğruluğu veya kalibre olasılık değildir. Domain doğrulaması, backtest ve model risk yönetimi olmadan karar garantisi vermez.
+- Tahmin modelleri kronolojik holdout, churn/risk sınıflandırması stratified holdout metrikleri üretir; bunlar yine kalibre karar garantisi değildir. Domain doğrulaması, backtest ve model risk yönetimi gerekir.
 - Dashboard veri listelerinde büyük veri için kapsamlı pagination/streaming yoktur.
-- Merkezi metrik, alarm ve harici log/SIEM entegrasyonu production Compose'a eklenmemiştir.
+- Prometheus metrikleri ve yerel alarm kuralları production Compose'a eklenmiştir; harici alarm yönlendirme ve SIEM hesabı sağlanmadığından operatör yapılandırması gerekir.
 - JS bundle code splitting ve uzun süreli performans testi yapılmalıdır.
 - Android cleartext kabul etmez; trusted HTTPS API, `https://localhost` CORS, cihaz E2E, release signing ve store dağıtımı bu denetimin dışındadır.
 

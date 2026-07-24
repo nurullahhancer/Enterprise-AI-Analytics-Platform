@@ -4,8 +4,10 @@ import { serverAppPromise } from './server';
 import { Express } from 'express';
 import {
   changeUserRole,
+  createConnection,
   deleteUser,
   findUserByEmail,
+  getActiveMembership,
   getLatestDataset,
   LastAdminError,
   listUsers,
@@ -14,6 +16,19 @@ import {
   updateUserRole
 } from './src/lib/db';
 import { buildExportPayload } from './src/server/ml/pipeline';
+import {
+  acceptInvitation,
+  changeMemberRole,
+  addAiCreditsToWallet,
+  consumeUsage,
+  createAuthActionToken,
+  createInvitation,
+  getUsage,
+  PlanQuotaError,
+  refundUsage,
+  updateAiUsageSettings
+} from './src/lib/saasDb';
+import { createOpaqueToken } from './src/lib/securityTokens';
 
 // Mock GoogleGenAI
 vi.mock('@google/genai', () => {
@@ -102,7 +117,20 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
 
     expect(me.status).toBe(200);
     expect(me.body.user.email).toBe('new-user@enterprise.com');
-    expect(me.body.user.role).toBe('analyst');
+    expect(me.body.user.role).toBe('admin');
+    expect(me.body.organization.organization_id).toBe(me.body.user.tenantId);
+  });
+
+  it('reports the free package clearly when a workspace has no paid subscription', async () => {
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email: 'new-user@enterprise.com', password: 'securePassword123' });
+    const usage = await request(app)
+      .get('/api/saas/usage')
+      .set('Authorization', `Bearer ${login.body.token}`);
+
+    expect(usage.status).toBe(200);
+    expect(usage.body).toMatchObject({ planKey: 'starter', subscriptionStatus: 'included' });
   });
 
   it('revokes the current JWT on logout', async () => {
@@ -122,28 +150,89 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     expect(reusedToken.status).toBe(401);
   });
 
-  it('enforces viewer write restrictions on the server', async () => {
+  it('uses an HttpOnly cookie for same-origin web sessions', async () => {
+    const agent = request.agent(app);
+    const email = 'cookie-session@enterprise.com';
+    await agent.post('/api/register').send({ email, name: 'Cookie Session', password: 'securePassword123' });
+    const login = await agent
+      .post('/api/login')
+      .set('X-Client-Type', 'web')
+      .send({ email, password: 'securePassword123' });
+
+    expect(login.status).toBe(200);
+    // Test clients also receive a bearer token, while the browser path still establishes the cookie.
+    expect(login.body.token).toBeDefined();
+    expect(login.headers['set-cookie']?.[0]).toContain('HttpOnly');
+    expect(login.headers['set-cookie']?.[0]).toContain('SameSite=Lax');
+
+    const me = await agent.get('/api/me');
+    expect(me.status).toBe(200);
+    expect(me.body.user.email).toBe(email);
+
+    await agent.post('/api/logout');
+    expect((await agent.get('/api/me')).status).toBe(401);
+  });
+
+  it('rejects cross-organization identifiers even with a valid JWT', async () => {
+    const first = `idor-a-${Date.now()}@enterprise.com`;
+    const second = `idor-b-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email: first, name: 'Tenant A', password: 'securePassword123' });
+    await request(app).post('/api/register').send({ email: second, name: 'Tenant B', password: 'securePassword123' });
+    const firstLogin = await request(app).post('/api/login').send({ email: first, password: 'securePassword123' });
+    const secondLogin = await request(app).post('/api/login').send({ email: second, password: 'securePassword123' });
+    const firstOrganizationId = firstLogin.body.organization.organization_id;
+
+    const forbidden = await request(app)
+      .get('/api/dataset/list')
+      .set('Authorization', `Bearer ${secondLogin.body.token}`)
+      .set('X-Organization-Id', firstOrganizationId);
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body.error.code).toBe('ORGANIZATION_ACCESS_DENIED');
+  });
+
+  it('enforces organization viewer write restrictions on the server', async () => {
+    const ownerEmail = 'viewer-owner@enterprise.com';
     const email = 'viewer-user@enterprise.com';
     await request(app)
       .post('/api/register')
+      .send({ email: ownerEmail, name: 'Viewer Owner', password: 'securePassword123' });
+    await request(app)
+      .post('/api/register')
       .send({ email, name: 'Viewer User', password: 'securePassword123' });
-    await updateUserRole(email, 'viewer');
+    const ownerOrganization = (await getActiveMembership(ownerEmail))!;
+    const ownerLogin = await request(app)
+      .post('/api/login')
+      .send({ email: ownerEmail, password: 'securePassword123' });
+    await request(app)
+      .post('/api/upload')
+      .set('X-Organization-Id', ownerOrganization.organization_id)
+      .set('Authorization', `Bearer ${ownerLogin.body.token}`)
+      .attach('file', Buffer.from('name,value\nShared,1'), 'shared.csv');
+    const invitation = createOpaqueToken();
+    await createInvitation(ownerOrganization.organization_id, email, 'viewer', ownerEmail, invitation.hash, new Date(Date.now() + 60_000));
+    await acceptInvitation(invitation.hash, email);
     const login = await request(app)
       .post('/api/login')
       .send({ email, password: 'securePassword123' });
+    const organizationHeader = { 'X-Organization-Id': ownerOrganization.organization_id };
 
     const read = await request(app)
       .get('/api/dataset/list')
+      .set(organizationHeader)
       .set('Authorization', `Bearer ${login.body.token}`);
     const write = await request(app)
       .delete('/api/dataset')
+      .set(organizationHeader)
       .set('Authorization', `Bearer ${login.body.token}`);
     const selfEscalation = await request(app)
       .put('/api/enterprise/roles')
+      .set(organizationHeader)
       .set('Authorization', `Bearer ${login.body.token}`)
       .send({ email, role: 'admin' });
 
     expect(read.status).toBe(200);
+    expect(read.body).toHaveLength(1);
+    expect(read.body[0].filename).toBe('shared.csv');
     expect(write.status).toBe(403);
     expect(selfEscalation.status).toBe(403);
   });
@@ -195,6 +284,207 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     expect(remaining.body[0]).toMatchObject({ id: first.body.id, filename: 'first.csv', is_active: 1 });
   });
 
+  it('accepts a data file larger than the former 10 MB upload limit', async () => {
+    const email = `large-dataset-${Date.now()}@enterprise.com`;
+    await request(app)
+      .post('/api/register')
+      .send({ email, name: 'Large Dataset', password: 'securePassword123' });
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+    const content = Buffer.from(`note\n${'x'.repeat((10 * 1024 * 1024) + 1_024)}\n`);
+
+    const uploaded = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', content, 'buyuk-veri.csv');
+
+    expect(uploaded.status).toBe(200);
+    expect(uploaded.body).toMatchObject({ filename: 'buyuk-veri.csv', rowCount: 1, columnCount: 1 });
+
+    await request(app)
+      .delete(`/api/dataset/${uploaded.body.id}`)
+      .set('Authorization', authorization)
+      .expect(200);
+  }, 15_000);
+
+  it('configures bounded automatic REST schedules and exposes sync history', async () => {
+    const email = `connector-schedule-${Date.now()}@enterprise.com`;
+    await request(app)
+      .post('/api/register')
+      .send({ email, name: 'Connector Schedule', password: 'securePassword123' });
+    const login = await request(app)
+      .post('/api/login')
+      .send({ email, password: 'securePassword123' });
+    const organizationId = login.body.organization.organization_id as string;
+    const connectionId = await createConnection(organizationId, 'api', 'Scheduled Source', 'encrypted-test-value', email);
+    const authorization = `Bearer ${login.body.token}`;
+
+    const invalid = await request(app)
+      .patch(`/api/enterprise/connections/${connectionId}/schedule`)
+      .set('Authorization', authorization)
+      .send({ enabled: true, intervalMinutes: 5 });
+    const enabled = await request(app)
+      .patch(`/api/enterprise/connections/${connectionId}/schedule`)
+      .set('Authorization', authorization)
+      .send({ enabled: true, intervalMinutes: 30 });
+    const history = await request(app)
+      .get(`/api/enterprise/connections/${connectionId}/sync-runs`)
+      .set('Authorization', authorization);
+
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error.code).toBe('INVALID_SYNC_SCHEDULE');
+    expect(enabled.status).toBe(200);
+    expect(enabled.body).toMatchObject({
+      id: connectionId,
+      scheduleEnabled: true,
+      scheduleIntervalMinutes: 30
+    });
+    expect(new Date(enabled.body.nextSyncAt).getTime()).toBeGreaterThan(Date.now());
+    expect(history.status).toBe(200);
+    expect(history.body.items).toEqual([]);
+  });
+
+  it('persists tenant-scoped business notification preferences', async () => {
+    const email = `notifications-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Notification Admin', password: 'securePassword123' });
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+    const updated = await request(app)
+      .put('/api/enterprise/notification-settings')
+      .set('Authorization', authorization)
+      .send({ emailEnabled: true, events: ['kpi_breach', 'billing'] });
+    const fetched = await request(app)
+      .get('/api/enterprise/notification-settings')
+      .set('Authorization', authorization);
+
+    expect(updated.status).toBe(200);
+    expect(updated.body).toMatchObject({ emailEnabled: true, slackConfigured: false, teamsConfigured: false, events: ['kpi_breach', 'billing'] });
+    expect(fetched.status).toBe(200);
+    expect(fetched.body.events).toEqual(['kpi_breach', 'billing']);
+  });
+
+  it('persists dashboard layout and provides tenant data governance controls', async () => {
+    const email = `governance-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Governance Admin', password: 'securePassword123' });
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+
+    const layout = await request(app)
+      .put('/api/dashboard/preference')
+      .set('Authorization', authorization)
+      .send({ order: ['trend', 'kpi-revenue', 'unknown'], hidden: ['profile'] });
+    const savedLayout = await request(app)
+      .get('/api/dashboard/preference')
+      .set('Authorization', authorization);
+    const policy = await request(app)
+      .put('/api/enterprise/data-governance')
+      .set('Authorization', authorization)
+      .send({ enabled: true, retentionDays: 365 });
+    const exported = await request(app)
+      .get('/api/enterprise/data-governance/export')
+      .set('Authorization', authorization);
+
+    expect(layout.status).toBe(200);
+    expect(layout.body).toMatchObject({ order: ['trend', 'kpi-revenue'], hidden: ['profile'] });
+    expect(savedLayout.body).toMatchObject({ order: ['trend', 'kpi-revenue'], hidden: ['profile'] });
+    expect(policy.status).toBe(200);
+    expect(policy.body).toMatchObject({ enabled: true, retentionDays: 365 });
+    expect(exported.status).toBe(200);
+    expect(exported.headers['content-disposition']).toContain('reai-kurum-verisi-');
+    expect(exported.body.organization.owner_email).toBe(email);
+  });
+
+  it('imports JSON and lets users curate the analysis scope without deleting sources', async () => {
+    const email = `scope-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({
+      email,
+      name: 'Scope User',
+      password: 'securePassword123'
+    });
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+
+    const jsonUpload = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from(JSON.stringify({ items: [
+        { category: 'A', revenue: 10 },
+        { category: 'B', revenue: 20 }
+      ] })), 'source.json');
+    const csvUpload = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('category,revenue\nC,30'), 'source.csv');
+
+    expect(jsonUpload.status).toBe(200);
+    expect(jsonUpload.body).toMatchObject({ rowCount: 2, columnCount: 2, sourceType: 'json' });
+    expect(csvUpload.status).toBe(200);
+
+    const excluded = await request(app)
+      .patch(`/api/dataset/${csvUpload.body.id}/analysis-scope`)
+      .set('Authorization', authorization)
+      .send({ enabled: false });
+    const listed = await request(app).get('/api/dataset/list').set('Authorization', authorization);
+    const summary = await request(app).get('/api/dataset/summary').set('Authorization', authorization);
+
+    expect(excluded.status).toBe(200);
+    expect(listed.body).toHaveLength(2);
+    expect(listed.body.find((item: { id: number }) => item.id === csvUpload.body.id).include_in_analysis).toBe(0);
+    expect(summary.status).toBe(200);
+    expect(summary.body.datasetIds).toEqual([jsonUpload.body.id]);
+    expect(summary.body.summary).toMatchObject({ rowCount: 2, totalRevenue: 30 });
+  });
+
+  it('keeps heterogeneous uploads usable by grouping sources around the active dataset', async () => {
+    const email = `schema-group-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({
+      email,
+      name: 'Schema Group User',
+      password: 'securePassword123'
+    });
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+
+    const commerce = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('siparis_id,tarih,kategori,urun_adi,bolge,satis_kanali,adet,birim_fiyat,toplam_tutar,musteri_memnuniyet_skoru,iade_edildi\n1,2026-01-01,A,Urun,A,Web,2,10,20,5,hayir'), 'eticaret.csv');
+    const sales = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('IslemID,Tarih,Kategori,Bolge,Musteri_Skoru,Satis_Miktari,Kar_Orani\n2,2026-01-02,B,B,4,30,0.2'), 'satis.csv');
+
+    const relatedGroup = await request(app).get('/api/dataset/analysis-group').set('Authorization', authorization);
+    expect(commerce.status).toBe(200);
+    expect(sales.status).toBe(200);
+    expect(relatedGroup.status).toBe(200);
+    expect(relatedGroup.body.datasetIds).toEqual([commerce.body.id, sales.body.id]);
+    expect(relatedGroup.body.excludedFilenames).toEqual([]);
+
+    const staff = await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('calisan,departman,izin_gunu\nAyse,Finans,3'), 'personel.csv');
+    const separateGroup = await request(app).get('/api/dataset/analysis-group').set('Authorization', authorization);
+    const staffColumns = await request(app).get('/api/kpis/columns').set('Authorization', authorization);
+
+    expect(staff.status).toBe(200);
+    expect(separateGroup.status).toBe(200);
+    expect(separateGroup.body.datasetIds).toEqual([staff.body.id]);
+    expect(separateGroup.body.excludedFilenames).toEqual(expect.arrayContaining(['eticaret.csv', 'satis.csv']));
+    expect(staffColumns.status).toBe(200);
+    expect(staffColumns.body.allColumns).toEqual(expect.arrayContaining(['calisan', 'departman', 'izin_gunu']));
+
+    await request(app)
+      .put(`/api/dataset/${sales.body.id}/active`)
+      .set('Authorization', authorization);
+    const restoredGroup = await request(app).get('/api/dataset/analysis-group').set('Authorization', authorization);
+    expect(restoredGroup.body.datasetIds).toEqual([commerce.body.id, sales.body.id]);
+    expect(restoredGroup.body.excludedFilenames).toEqual(['personel.csv']);
+  });
+
   it('atomically preserves one administrator during concurrent demotion and deletion', async () => {
     const first = 'atomic-admin-a@enterprise.com';
     const second = 'atomic-admin-b@enterprise.com';
@@ -211,7 +501,76 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
 
     const admins = (await listUsers()).filter((user) => user.role === 'admin');
     expect(admins).toHaveLength(1);
-    await expect(deleteUser(admins[0].email)).rejects.toBeInstanceOf(LastAdminError);
+    await expect(deleteUser(admins[0].email)).resolves.toBeUndefined();
+    expect(await findUserByEmail(admins[0].email)).toBeNull();
+  });
+
+  it('preserves the final administrator inside each organization', async () => {
+    const email = `last-org-admin-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Last Org Admin', password: 'securePassword123' });
+    const membership = (await getActiveMembership(email))!;
+
+    await expect(changeMemberRole(membership.organization_id, email, 'analyst')).rejects.toBeInstanceOf(LastAdminError);
+  });
+
+  it('enforces persistent monthly plan usage atomically', async () => {
+    const email = `usage-quota-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Usage Quota', password: 'securePassword123' });
+    const membership = (await getActiveMembership(email))!;
+
+    expect(await consumeUsage(membership.organization_id, 'ml_runs', 25)).toBe(25);
+    await expect(consumeUsage(membership.organization_id, 'ml_runs')).rejects.toBeInstanceOf(PlanQuotaError);
+  });
+
+  it('enforces per-person AI limits, refunds failed requests and automatically uses prepaid credits', async () => {
+    const email = `ai-quota-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'AI Quota', password: 'securePassword123' });
+    const membership = (await getActiveMembership(email))!;
+    await updateAiUsageSettings(membership.organization_id, { perUserMonthlyLimit: 2, autoUsePrepaidCredits: false, autoCreditBundle: 1000 }, email);
+    expect(await consumeUsage(membership.organization_id, 'ai_requests', 2, email)).toBe(2);
+    await expect(consumeUsage(membership.organization_id, 'ai_requests', 1, email)).rejects.toMatchObject({ code: 'AI_USER_QUOTA_EXHAUSTED' });
+    expect(await refundUsage(membership.organization_id, 'ai_requests', 1, email)).toBe(1);
+    expect(await consumeUsage(membership.organization_id, 'ai_requests', 1, email)).toBe(2);
+
+    await updateAiUsageSettings(membership.organization_id, { perUserMonthlyLimit: null, autoUsePrepaidCredits: true, autoCreditBundle: 1000 }, email);
+    await addAiCreditsToWallet(membership.organization_id, 1000);
+    await consumeUsage(membership.organization_id, 'ai_requests', 98, email);
+    expect(await consumeUsage(membership.organization_id, 'ai_requests', 1, email)).toBe(101);
+    const usage = await getUsage(membership.organization_id, email);
+    expect(usage.ai).toMatchObject({ used: 101, effectiveLimit: 1100, bonusCredits: 1000, creditBalance: 0 });
+  });
+
+  it('creates a shareable invitation when transactional e-mail is not configured', async () => {
+    const email = `invite-owner-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Invite Owner', password: 'securePassword123' });
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const invitedEmail = `invited-${Date.now()}@enterprise.com`;
+    const response = await request(app).post('/api/saas/invitations').set('Authorization', `Bearer ${login.body.token}`).send({ email: invitedEmail, role: 'viewer' });
+    expect(response.status).toBe(201);
+    expect(response.body.delivery).toBe('link');
+    expect(response.body.inviteUrl).toContain('invite=');
+    expect(response.body.invitation.role).toBe('viewer');
+  });
+
+  it('consumes password reset tokens once and revokes old sessions', async () => {
+    const email = `password-reset-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Password Reset', password: 'securePassword123' });
+    const reset = createOpaqueToken();
+    await createAuthActionToken(email, 'reset_password', reset.hash, new Date(Date.now() + 60_000));
+
+    const changed = await request(app)
+      .post('/api/reset-password')
+      .send({ token: reset.token, password: 'newSecurePassword456' });
+    const reused = await request(app)
+      .post('/api/reset-password')
+      .send({ token: reset.token, password: 'anotherSecurePassword789' });
+    const oldLogin = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const newLogin = await request(app).post('/api/login').send({ email, password: 'newSecurePassword456' });
+
+    expect(changed.status).toBe(200);
+    expect(reused.status).toBe(400);
+    expect(oldLogin.status).toBe(401);
+    expect(newLogin.status).toBe(200);
   });
 
   it('requires and validates a separate bootstrap token for the configured first admin email', async () => {
@@ -400,6 +759,98 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     expect(pluralAlias.body.some((dataset: { id: number }) => dataset.id === firstId)).toBe(true);
   });
 
+  it('persists validated ML analyses and exports the exact saved run', async () => {
+    const email = `analysis-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Analysis User', password: 'securePassword123' });
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+    const csv = ['date,revenue'];
+    for (let index = 1; index <= 10; index += 1) csv.push(`2026-01-${String(index).padStart(2, '0')},${index * 100}`);
+    await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from(csv.join('\n')), 'validated.csv');
+
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/analyze')) {
+        return new Response(JSON.stringify({
+          dataset_type: 'time_series',
+          feature_columns: ['date'],
+          target_column: 'revenue',
+          forecast: {
+            type: 'forecast',
+            confidence: 0.81,
+            model: 'chronological holdout test model',
+            metrics: { mae: 10, rmse: 12, r2: 0.9, smape: 4, train_rows: 8, test_rows: 2, validation_method: 'chronological_last_20_percent' },
+            data: [{ row: 'T+1', predicted: 1100, lower: 1075, upper: 1125 }]
+          },
+          anomalies: { type: 'anomaly', confidence: 0.7, model: 'IsolationForest', metrics: { anomaly_count: 0 }, data: [] },
+          segments: { type: 'segment', confidence: 0.7, model: 'KMeans', metrics: { segments: 2 }, data: [] },
+          warnings: [],
+          cached: false
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return originalFetch(url as any);
+    }));
+
+    try {
+      const analyzed = await request(app)
+        .post('/api/ml/analyze')
+        .set('Authorization', authorization)
+        .send({ target_column: 'revenue', periods: 1 });
+      expect(analyzed.status).toBe(200);
+      expect(analyzed.body.analysisRunId).toMatch(/^analysis_/);
+      expect(analyzed.body.forecast.metrics).toMatchObject({ train_rows: 8, test_rows: 2 });
+      expect((await getUsage(login.body.organization.organization_id)).counters.ml_runs).toBe(1);
+
+      const saved = await request(app)
+        .get(`/api/ml/analyses/${analyzed.body.analysisRunId}`)
+        .set('Authorization', authorization);
+      const report = await request(app)
+        .get(`/reports/download?type=analysis&analysisId=${encodeURIComponent(analyzed.body.analysisRunId)}`)
+        .set('Authorization', authorization);
+      expect(saved.status).toBe(200);
+      expect(saved.body.forecast.data[0]).toMatchObject({ predicted: 1100, lower: 1075, upper: 1125 });
+      expect(report.status).toBe(200);
+      expect(report.headers['content-type']).toContain('text/csv');
+      expect(report.text).toContain('chronological holdout test model');
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
+  it('refunds a reserved ML run when the model service fails', async () => {
+    const email = `analysis-failure-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Analysis Failure', password: 'securePassword123' });
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' });
+    const authorization = `Bearer ${login.body.token}`;
+    await request(app)
+      .post('/api/upload')
+      .set('Authorization', authorization)
+      .attach('file', Buffer.from('date,revenue\n2026-01-01,100\n2026-01-02,120\n2026-01-03,140\n2026-01-04,160\n2026-01-05,180'), 'failure.csv');
+
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/analyze')) return new Response('service unavailable', { status: 503 });
+      return originalFetch(url as any);
+    }));
+    try {
+      const response = await request(app)
+        .post('/api/ml/analyze')
+        .set('Authorization', authorization)
+        .send({ target_column: 'revenue', periods: 2 });
+      expect(response.status).toBe(502);
+      expect(response.body.error).toMatchObject({
+        code: 'ML_SERVICE_ERROR',
+        message: 'ML servisi analizi tamamlayamadı.'
+      });
+      expect((await getUsage(login.body.organization.organization_id)).counters.ml_runs).toBe(0);
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
   it('ML forecast selects revenue target and returns non-zero predictions', async () => {
     await request(app)
       .post('/api/register')
@@ -501,12 +952,16 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
     await saveDataset('profile-user@enterprise.com', 'profile.csv', csv, 'none', 3, 3);
 
     const res = await request(app)
-      .get('/api/ml/insights')
+      .get('/api/dashboard/dynamic')
       .set('Authorization', `Bearer ${login.body.token}`);
 
     expect(res.status).toBe(200);
-    // ML insights returns forecast/anomalies/segments structure
-    expect(res.body.forecast).toBeDefined();
-    expect(res.body.anomalies).toBeDefined();
+    const orderId = res.body.profile.columns.find((column: { name: string }) => column.name === 'Siparis ID');
+    const date = res.body.profile.columns.find((column: { name: string }) => column.name === 'Tarih');
+    const revenue = res.body.profile.columns.find((column: { name: string }) => column.name === 'ciro');
+    expect(orderId).toMatchObject({ type: 'id', min: null, max: null, mean: null });
+    expect(date).toMatchObject({ type: 'datetime', min: null, max: null, mean: null });
+    expect(revenue).toMatchObject({ type: 'currency', min: 1200, max: 1600, mean: 1400 });
+    expect(res.body.ml.forecast.targetColumn).toBe('ciro');
   });
 });

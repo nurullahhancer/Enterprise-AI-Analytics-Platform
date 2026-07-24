@@ -13,6 +13,7 @@ coverage/
 **/obj/
 android/.gradle/
 android/app/build/
+.android-signing/
 frontend/.next/
 
 # Local environment and secrets
@@ -23,6 +24,7 @@ frontend/.next/
 *.db
 *.sqlite
 *.sqlite3
+backups/
 
 # Logs and OS/editor noise
 *.log
@@ -30,3 +32,8 @@ frontend/.next/
 .idea/
 .pytest_cache/
 .ruff_cache/
+
+# Large binaries and archives
+public/downloads/*.zip
+public/downloads/*.apk
+

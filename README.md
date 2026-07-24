@@ -1,8 +1,8 @@
 # Enterprise AI Analytics Platform
 
-Enterprise AI Analytics Platform; kullanıcıların CSV verilerini güvenli biçimde yükleyip inceleyebildiği, dashboard ve rapor üretebildiği, temel ETL/ML analizleri çalıştırabildiği ve isteğe bağlı olarak doküman destekli yapay zekâ sohbeti kullanabildiği tek sunuculu bir analitik uygulamasıdır.
+Enterprise AI Analytics Platform; kurumların CSV, JSON ve izinli REST kaynaklarından gelen verilerini güvenli biçimde tek analiz kapsamında topladığı, dashboard ve doğrulanabilir rapor ürettiği, gerçek ML analizi çalıştırdığı ve sonuçları isteğe bağlı yapay zekâ ile yorumlayabildiği çok kiracılı bir SaaS uygulamasıdır.
 
-Production için kanonik uygulama proje kökündeki React/Vite arayüzü ile Express/SQLite API'sidir. `frontend/` altındaki Next.js arayüzü ve `backend/` altındaki .NET çözümü önceki mimari çalışmasının referans/test bileşenleridir; ana `docker-compose.yml` bunları production trafiğine çıkarmaz.
+Production için kanonik uygulama proje kökündeki React/Vite arayüzü ile Express/PostgreSQL API'sidir. SQLite mevcut kurulumlar için yalnız geçiş kaynağı ve geliştirme alternatifi olarak desteklenir. `frontend/` altındaki Next.js arayüzü ve `backend/` altındaki .NET çözümü önceki mimari çalışmasının referans/test bileşenleridir; ana `docker-compose.yml` bunları production trafiğine çıkarmaz.
 
 ## Production mimarisi
 
@@ -11,7 +11,7 @@ Tarayıcı -- HTTPS :443 --> Nginx
                               |
                               | yalnızca 127.0.0.1:3000
                               v
-                    React SPA + Express API  ---->  SQLite (/app/data/reai.db)
+                    React SPA + Express API  ---->  PostgreSQL + zorunlu RLS
                               |
                               | yalnızca internal Docker ağı
                               v
@@ -19,24 +19,30 @@ Tarayıcı -- HTTPS :443 --> Nginx
 ```
 
 - Web/API: Node.js 22, Express, React 19, Vite, TypeScript
-- Kalıcı veri: SQLite ve Docker named volume (`app-data`)
+- Kalıcı veri: PostgreSQL 17 ve Docker named volume (`postgres-data`)
 - ML: FastAPI, pandas, NumPy ve scikit-learn; dışarıya port yayınlanmaz
-- Kimlik doğrulama: 8 saatlik HS256 JWT, scrypt parola özeti, token sürümleme ve sunucu tarafı çıkış iptali
-- Yetkilendirme: `admin`, `analyst`, `viewer` rolleri ve sunucu tarafı kontroller
+- Kimlik doğrulama: web için HttpOnly/Secure/SameSite oturum çerezi, mobil/API için 8 saatlik HS256 JWT, scrypt parola özeti ve token sürümleme
+- Yetkilendirme: organizasyon üyeliğine bağlı `admin`, `analyst`, `viewer` rolleri; açık tenant filtresi ve PostgreSQL forced RLS
 - İsteğe bağlı AI: Google Gemini; müşteri verisi ancak açık izin değişkeni de etkinse gönderilir
 - İsteğe bağlı veri kaynağı: yalnızca allowlist ile sınırlandırılmış HTTPS/JSON REST konnektörü
 - Mobil kabuk: Capacitor/Android; yalnız güvenilen HTTPS API ile ayrı build gerekir
 
 ## Temel özellikler
 
-- Kayıt, giriş, oturum geri yükleme, profil/parola güncelleme ve hesap silme
-- Kullanıcı bazında veri izolasyonu
-- Birden fazla CSV yükleme; dashboard, ML, rapor, ETL ve veri destekli AI için kullanıcının tüm CSV'lerini kaynak dosya bilgisiyle birleştirme
+- Çalışma alanı oluşturan kayıt, giriş, davetle üyelik, e-posta doğrulama, tek kullanımlık parola yenileme ve hesap silme
+- Organizasyon seçici, üye/davet/rol yönetimi ve organizasyon bazında veri izolasyonu
+- Başlangıç/Profesyonel/Kurumsal plan limitleri, kalıcı aylık AI/ML sayaçları ve iyzico hosted subscription checkout
+- CSV ve JSON yükleme, izinli REST kaynaklarından güncel anlık görüntü alma ve her veri setini analiz kapsamına ayrı ayrı dahil etme/çıkarma
+- Analiz odağıyla uyumlu şemaları büyük/küçük harf duyarsız kolon eşleştirmesi ve `kaynak_dosya` lineage alanıyla birleştirme; farklı şemaları silmeden ayrı analiz gruplarında saklama
 - Median doldurma, tip normalizasyonu ve IQR aykırı değer adımlarını içeren gerçek CSV ETL akışı
-- Tahmin, anomali, kümeleme ve veri profilleme analizleri; tahmin uyum skoru holdout doğruluğu değil in-sample/heuristik göstergedir
+- ETL çıktısını analiz kapsamına alırken kaynak veri setlerini otomatik çıkararak orijinal+türetilmiş veri çift sayımını önleme
+- Analiz Stüdyosu'nda hedef kolon ve 1–12 dönem ufuk seçimi; kronolojik holdout ile MAE/RMSE/R²/SMAPE, gelecek tahminleri, alt/üst aralıklar, anomaliler, segmentler ve veri kalitesi uyarıları
+- Başarılı analizleri organizasyon bazında kalıcı saklama; doğrulanmış yapısal sonuçlardan AI yorumu ve aynı koşu için yeniden üretilebilir CSV raporu
+- Veri destekli sohbette ham satır yerine sunucu tarafından hesaplanan profil, metrik ve son doğrulanmış analizleri kullanma
 - CSV rapor dışa aktarma ve formül enjeksiyonu koruması
-- PDF/TXT doküman ayrıştırma ve yerel metin parçası araması
+- PDF/TXT doküman ayrıştırma, pozitif eşleşmeli yerel parça araması ve kaynak/parça atıfları
 - Şifreli REST konnektör yapılandırması ve SSRF korumalı veri alma
+- REST ingest sırasında aynı bağlantının eski kopyalarını çoğaltmak yerine güncel anlık görüntüsünü yenileme
 - Kullanıcıya ait audit kayıtları ve bildirimler
 - Sağlık kontrolü, yapılandırılmış loglar ve Docker restart/log rotation ayarları
 
@@ -70,6 +76,7 @@ chmod 600 .env
 - `BOOTSTRAP_ADMIN_EMAIL`: ilk yönetici olacak e-posta
 - `BOOTSTRAP_ADMIN_TOKEN`: ilk yönetici kaydını ayrıca yetkilendiren en az 32 karakterlik tek kullanımlık secret
 - `APP_URL`: kullanıcının tarayıcıda açacağı tam adres
+- `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`, `DATABASE_URL`: ayrı yönetim ve `NOBYPASSRLS` uygulama rolleri
 
 Gerçek anahtarları Git'e eklemeyin ve terminal/rapor çıktısına yazdırmayın.
 
@@ -117,7 +124,7 @@ Kurulum, Nginx, yedekleme, rollback ve operasyon komutlarının tamamı için [D
 | REST konnektöründen ingest | Evet | Evet | Hayır |
 | Doküman silme ve rol yönetimi | Evet | Hayır | Hayır |
 
-Kullanıcı rolü JWT içinden körü körüne kabul edilmez; her istekte veritabanındaki güncel kullanıcı ve rol kontrol edilir. Son yönetici rolü düşürülemez.
+Kullanıcı rolü JWT içinden kabul edilmez; her istekte seçili organizasyonun güncel üyeliği kontrol edilir. Her organizasyonun son yöneticisi düşürülemez veya çıkarılamaz.
 
 ## Environment özeti
 
@@ -129,11 +136,17 @@ Eksiksiz ve secretsiz şablon `.env.example` dosyasındadır.
 | `ALLOWED_ORIGINS` | Virgülle ayrılmış ek CORS origin'leri |
 | `TRUST_PROXY_HOPS` | Güvenilen reverse proxy atlama sayısı |
 | `JWT_SECRET`, `JWT_ISSUER`, `JWT_AUDIENCE` | JWT güvenlik ayarları |
+| `DATABASE_URL`, `POSTGRES_*` | PostgreSQL uygulama/yönetim rolleri ve bağlantı ayarları |
+| `RESEND_API_KEY`, `EMAIL_FROM`, `REQUIRE_EMAIL_VERIFICATION` | İşlem e-postaları ve doğrulama zorunluluğu |
+| `IYZICO_*` | Hosted abonelik, plan referansları ve V3 webhook doğrulaması |
 | `ALLOW_PUBLIC_REGISTRATION` | Herkese açık kayıt anahtarı |
 | `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_TOKEN` | İlk yönetici e-posta eşleşmesi ve ayrı kayıt yetkisi |
 | `DATA_ENCRYPTION_KEY` | Konnektör ayarları için AES-256-GCM anahtarı |
 | `REST_CONNECTOR_ALLOWED_HOSTS` | İzinli tam REST hostname listesi |
+| `SQL_CONNECTOR_ALLOWED_HOSTS` | Salt-okunur PostgreSQL konektörleri için izinli tam hostname listesi |
 | `GEMINI_API_KEY`, `ALLOW_EXTERNAL_AI_DATA` | İsteğe bağlı dış AI ve açık veri aktarım izni |
+| `DATASET_SCHEMA_MIN_OVERLAP` | Aynı analiz grubuna alınacak kaynaklar için gereken asgari normalize kolon örtüşmesi |
+| `ANALYSIS_RUN_MAX_PER_ORG`, `ANALYSIS_RUN_MAX_RESULT_CHARS` | Kalıcı analiz geçmişi adet ve sonuç boyutu sınırları |
 | `MAX_*`, `JSON_BODY_LIMIT` | Veri/doküman/request üst sınırları |
 
 ## Doğrulama
@@ -170,12 +183,12 @@ Denetim sırasında çalıştırılan testlerin ve kalan sınırların ayrıntı
 
 ## Bilinen kapsam sınırları
 
-- Bu dağıtım tek VDS/tek SQLite writer mimarisidir; yatay ölçekleme için harici veritabanı ve ortak session/job katmanı gerekir.
-- Organizasyonlar arası paylaşımlı üyelik/gerçek multi-tenant yönetimi etkin değildir; mevcut izolasyon kullanıcı hesabı bazındadır.
-- SQL konnektörü güvenlik ve sözleşme tamamlanana kadar devre dışıdır.
-- RAG, yerel metin parçası seçimi kullanır; Qdrant tabanlı gerçek embedding/vector araması production akışında yoktur.
-- Parola sıfırlama e-postası, ödeme ve ücretli servis çağrıları yapılandırılmamıştır.
+- Bu dağıtım tek VDS üzerinde PostgreSQL kullanır; çok düğümlü yatay ölçekleme için ortak job/rate-limit katmanı ve yönetilen veritabanı gerekir.
+- Analiz kapsamı uyumlu şemaların satır bazında birleşimini destekler; farklı tablolar arasında anahtar bazlı join veya kullanıcı tanımlı SQL henüz yoktur.
+- PostgreSQL konnektörü exact-host allowlist, ayrı salt-okunur kullanıcı, SELECT/WITH doğrulaması, read-only transaction, timeout ve satır/kolon limitleriyle desteklenir.
+- RAG, sözcüksel yerel metin parçası seçimi kullanır; embedding/vector tabanlı semantik arama production akışında yoktur.
+- İşlem e-postası ve gerçek ödeme ancak ilgili Resend/iyzico hesap anahtarları sağlandığında etkinleşir; sandbox anahtarları repoda tutulmaz.
 - Domain/DNS ve TLS sertifikası sunucu dışından sağlanmalıdır.
-- “Aktif” veri seti işareti analiz kapsamını daraltmaz; bütün kayıtlı CSV'ler birlikte değerlendirilir. ETL çıktısı da aynı havuza eklendiğinden operatör orijinal+türetilmiş veri çift sayımını yönetmelidir.
-- ML uyum/“confidence” değerleri kalibre olasılık veya holdout doğruluğu değildir; kritik kararlar için domain doğrulaması ve ayrı backtest gerekir.
+- İş kuyruğu ve saatlik AI hız sınırı process içidir; birden çok uygulama replikası veya restart dayanımı için Redis benzeri ortak katman gerekir.
+- ML güven skoru kronolojik holdout hata ve veri derinliğinden türetilen bir doğrulama göstergesidir; kalibre olasılık ya da karar garantisi değildir. Kritik kullanımda kuruma özgü backtest ve model risk doğrulaması gerekir.
 - Android cleartext trafiği kapalıdır. Mobil production build için `VITE_API_BASE_URL=https://...`, CORS'ta `https://localhost`, `npm run cap:sync`, cihaz E2E ve release signing gerekir; cihaz/store teslimi bu denetimin dışındadır.

@@ -1,0 +1,32 @@
+groups:
+  - name: reai-platform
+    rules:
+      - alert: ReaiServiceUnavailable
+        expr: up{job=~"reai-app|reai-ml"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "REAI service is unavailable"
+          description: "Prometheus cannot scrape {{ $labels.job }} for at least two minutes."
+
+      - alert: ReaiHighServerErrorRate
+        expr: |
+          sum(rate(reai_http_requests_total{status_class="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(reai_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "REAI server error rate is elevated"
+          description: "More than 5% of application requests have returned 5xx for five minutes."
+
+      - alert: ReaiApplicationMemoryHigh
+        expr: reai_process_resident_memory_bytes > 1000000000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "REAI application memory use is high"
+          description: "Resident memory has exceeded 1 GB for ten minutes."

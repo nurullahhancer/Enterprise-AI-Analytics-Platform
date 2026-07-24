@@ -1,11 +1,13 @@
 import { Router, Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../index';
 import { getCombinedUserDataset } from '../datasets/combined';
+import { getDashboardPreference, saveDashboardPreference } from '../../lib/dashboardPreferencesDb';
 import {
   buildAutomaticInsights,
   buildDataProfile,
   buildDatasetSummary,
   buildMlInsights,
+  detectDashboardTemplate,
   recommendWidgets
 } from '../ml/pipeline';
 
@@ -13,7 +15,7 @@ const router = Router();
 
 async function dynamicHandler(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const dataset = await getCombinedUserDataset(req.user!.email);
+    const dataset = await getCombinedUserDataset(req.organization!.organization_id);
     if (!dataset) {
       return res.json({
         emptyState: 'Veri arttıkça burada içgörüler görünecek. Başlamak için CSV dosyası yükleyin.',
@@ -33,8 +35,10 @@ async function dynamicHandler(req: AuthenticatedRequest, res: Response, next: Ne
       datasetFilename: dataset.filename,
       emptyState: widgets.length === 0 ? 'Veri arttıkça burada içgörüler görünecek.' : null,
       profile,
+      template: detectDashboardTemplate(profile),
       ml,
-      widgets
+      widgets,
+      preference: await getDashboardPreference(req.organization!.organization_id, req.user!.email)
     });
   } catch (err) {
     next(err);
@@ -43,7 +47,7 @@ async function dynamicHandler(req: AuthenticatedRequest, res: Response, next: Ne
 
 async function autoInsightsHandler(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const dataset = await getCombinedUserDataset(req.user!.email);
+    const dataset = await getCombinedUserDataset(req.organization!.organization_id);
     if (!dataset) {
       return res.json({
         generatedAt: new Date().toISOString(),
@@ -65,5 +69,15 @@ async function autoInsightsHandler(req: AuthenticatedRequest, res: Response, nex
 
 router.get('/dynamic', dynamicHandler);
 router.get('/auto', autoInsightsHandler);
+router.get('/preference', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try { res.json(await getDashboardPreference(req.organization!.organization_id, req.user!.email)); } catch (error) { next(error); }
+});
+router.put('/preference', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try { res.json(await saveDashboardPreference(req.organization!.organization_id, req.user!.email, req.body)); }
+  catch (error) {
+    if (error instanceof Error && /Dashboard/.test(error.message)) return res.status(400).json({ error: { code: 'INVALID_DASHBOARD_PREFERENCE', message: error.message } });
+    next(error);
+  }
+});
 
 export default router;

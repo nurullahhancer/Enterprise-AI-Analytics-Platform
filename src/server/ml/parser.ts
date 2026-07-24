@@ -4,31 +4,41 @@
  */
 
 export function parseCsv(text: string): string[][] {
-  return text
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => {
-      const cells: string[] = [];
-      let current = "";
-      let quoted = false;
-      for (let index = 0; index < line.length; index += 1) {
-        const char = line[index];
-        if (char === '"' && line[index + 1] === '"') {
-          current += '"';
-          index += 1;
-        } else if (char === '"') {
-          quoted = !quoted;
-        } else if (char === "," && !quoted) {
-          cells.push(current.trim());
-          current = "";
-        } else {
-          current += char;
-        }
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+
+  const finishRow = () => {
+    row.push(cell.trim());
+    if (row.some((value) => value.length > 0)) rows.push(row);
+    row = [];
+    cell = '';
+  };
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized[index];
+    if (character === '"') {
+      if (quoted && normalized[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
       }
-      cells.push(current.trim());
-      return cells;
-    });
+    } else if (character === ',' && !quoted) {
+      row.push(cell.trim());
+      cell = '';
+    } else if (character === '\n' && !quoted) {
+      finishRow();
+    } else {
+      cell += character;
+    }
+  }
+
+  if (quoted) throw new Error('CSV dosyasında kapanmamış bir tırnak işareti var.');
+  if (cell.length > 0 || row.length > 0) finishRow();
+  return rows;
 }
 
 export function toNumber(value: string | number | undefined): number | null {
@@ -121,12 +131,23 @@ export function formatDateOnly(date: Date): string {
 
 export type ColumnKind = "numeric" | "categorical" | "datetime" | "currency" | "text" | "id";
 
+export function isIdentifierHeader(header: string): boolean {
+  const name = normalizeLabel(header);
+  if (!name) return false;
+  return (
+    /(^| )(id|uuid|guid|key|sku|ean|iban)( |$)/.test(name) ||
+    /(^| )(kod|kodu|code|ref|referans|barkod|barcode|email|mail|telefon|phone|gsm|zip)( |$)/.test(name) ||
+    /(posta kodu|postal code|tc kimlik|vergi no|vergi numarasi|tax no|tax number)/.test(name) ||
+    /(siparis|order|fatura|invoice|musteri|customer|urun|product|stok|stock|islem|transaction|kayit|record|personel|employee|calisan) (no|numara|numarasi|number)$/.test(name)
+  );
+}
+
 export function inferColumnKind(
   header: string,
   values: string[],
   numericValues: number[]
 ): ColumnKind {
-  const normalizedHeader = header.toLowerCase();
+  const normalizedHeader = normalizeLabel(header);
   const nonEmptyValues = values.filter((v) => v.trim().length > 0);
   const uniqueCount = new Set(nonEmptyValues).size;
   const dateCount = nonEmptyValues.filter((v) => {
@@ -141,13 +162,17 @@ export function inferColumnKind(
     /ciro|gelir|revenue|sales|amount|tutar|cost|maliyet|price|fiyat|₺|\$|eur|usd/.test(
       normalizedHeader
     );
-  const idHint =
-    /(^id$|[_\s-]?id$|^id[_\s-]|uuid|key|kod|code|email|mail|siparis\s*id|sipariş\s*id|order\s*id)/.test(
-      normalizedHeader
-    );
+  const idHint = isIdentifierHeader(header);
+  const normalizedValues = new Set(nonEmptyValues.map(normalizeLabel));
+  const booleanValues = normalizedValues.size > 0 && [...normalizedValues].every((value) =>
+    ['0', '1', 'true', 'false', 'yes', 'no', 'evet', 'hayir'].includes(value)
+  );
 
-  if (idHint && uniqueCount >= Math.max(nonEmptyValues.length * 0.8, 1)) return "id";
+  // Business identifiers remain identifiers even when they repeat (for example,
+  // one order ID appearing on multiple line items). They are never measures.
+  if (idHint) return "id";
   if (dateRatio >= 0.65) return "datetime";
+  if (booleanValues) return "categorical";
   if (currencyHint && numericRatio >= 0.6) return "currency";
   if (numericRatio >= 0.7) return "numeric";
   if (uniqueCount <= Math.max(20, nonEmptyValues.length * 0.35)) return "categorical";

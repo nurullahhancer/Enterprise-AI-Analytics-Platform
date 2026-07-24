@@ -64,7 +64,7 @@ async function validateUrl(rawUrl: string): Promise<{ url: URL; address: string;
   return { url, address: selected.address, family: selected.family as 4 | 6 };
 }
 
-export async function fetchPublicJson(rawUrl: string): Promise<unknown> {
+export async function fetchPublicJson(rawUrl: string, signal?: AbortSignal): Promise<unknown> {
   const { url, address, family } = await validateUrl(rawUrl);
   const transport = url.protocol === 'https:' ? https : http;
 
@@ -76,6 +76,7 @@ export async function fetchPublicJson(rawUrl: string): Promise<unknown> {
       path: `${url.pathname}${url.search}`,
       method: 'GET',
       headers: { Accept: 'application/json' },
+      signal,
       servername: net.isIP(url.hostname) ? undefined : url.hostname,
       lookup: (_hostname, _options, callback) => callback(null, address, family)
     }, (response) => {

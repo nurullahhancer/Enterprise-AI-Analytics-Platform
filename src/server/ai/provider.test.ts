@@ -39,7 +39,7 @@ describe('AI provider adapter', () => {
     expect(getAiConfiguration()).toMatchObject({
       provider: 'nvidia',
       configured: false,
-      model: 'deepseek-ai/deepseek-v4-pro',
+      model: 'nvidia/nemotron-3-super-120b-a12b',
       issue: 'missing-key'
     });
 
@@ -47,7 +47,7 @@ describe('AI provider adapter', () => {
     expect(getAiConfiguration()).toMatchObject({
       provider: 'nvidia',
       configured: true,
-      model: 'deepseek-ai/deepseek-v4-pro'
+      model: 'nvidia/nemotron-3-super-120b-a12b'
     });
   });
 
@@ -67,17 +67,17 @@ describe('AI provider adapter', () => {
     expect(response).toEqual({
       text: 'Merhaba',
       provider: 'nvidia',
-      model: 'deepseek-ai/deepseek-v4-pro'
+      model: 'nvidia/nemotron-3-super-120b-a12b'
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('https://integrate.api.nvidia.com/v1/chat/completions');
     expect(init.headers.Authorization).toBe('Bearer test-nvidia-key');
     expect(JSON.parse(init.body)).toMatchObject({
-      model: 'deepseek-ai/deepseek-v4-pro',
+      model: 'nvidia/nemotron-3-super-120b-a12b',
       messages: [{ role: 'user', content: 'test prompt' }],
-      temperature: 1,
-      top_p: 0.95,
+      temperature: 0.2,
+      top_p: 0.9,
       stream: false,
       chat_template_kwargs: { thinking: false }
     });

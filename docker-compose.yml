@@ -25,6 +25,9 @@ services:
       NODE_ENV: production
       PORT: "3010"
       DB_PATH: data/reai.db
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
       APP_URL: ${APP_URL:-http://localhost:3000}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
@@ -34,37 +37,57 @@ services:
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-}
       AI_PROVIDER: ${AI_PROVIDER:-auto}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      NVIDIA_AI_MODEL: ${NVIDIA_AI_MODEL:-deepseek-ai/deepseek-v4-pro}
+      NVIDIA_AI_MODEL: ${NVIDIA_AI_MODEL:-nvidia/nemotron-3-super-120b-a12b}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_AI_MODEL: ${GEMINI_AI_MODEL:-gemini-2.5-flash}
       ALLOW_EXTERNAL_AI_DATA: ${ALLOW_EXTERNAL_AI_DATA:-false}
       AI_REQUESTS_PER_HOUR: ${AI_REQUESTS_PER_HOUR:-20}
-      AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:-120000}
+      AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:-30000}
       AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-1024}
       ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
       LOGIN_IP_MAX_ATTEMPTS: ${LOGIN_IP_MAX_ATTEMPTS:-30}
       REST_CONNECTOR_ALLOWED_HOSTS: ${REST_CONNECTOR_ALLOWED_HOSTS:-}
+      SQL_CONNECTOR_ALLOWED_HOSTS: ${SQL_CONNECTOR_ALLOWED_HOSTS:-}
+      CONNECTOR_SCHEDULER_ENABLED: ${CONNECTOR_SCHEDULER_ENABLED:-true}
+      CONNECTOR_SCHEDULER_POLL_MS: ${CONNECTOR_SCHEDULER_POLL_MS:-60000}
+      CONNECTOR_SYNC_RUN_MAX: ${CONNECTOR_SYNC_RUN_MAX:-180}
+      DATA_RETENTION_SCHEDULER_ENABLED: ${DATA_RETENTION_SCHEDULER_ENABLED:-true}
       ML_SERVICE_URL: http://ml-service:8000
       ML_JOB_MAX_QUEUE: ${ML_JOB_MAX_QUEUE:-50}
       ML_JOB_MAX_PER_USER: ${ML_JOB_MAX_PER_USER:-3}
       ML_JOB_MAX_RECORDS: ${ML_JOB_MAX_RECORDS:-200}
       ML_JOB_TTL_MS: ${ML_JOB_TTL_MS:-1800000}
       ML_JOB_TIMEOUT_MS: ${ML_JOB_TIMEOUT_MS:-60000}
-      MAX_DATASET_STORAGE_CHARS: ${MAX_DATASET_STORAGE_CHARS:-5000000}
-      MAX_DATASET_TOTAL_CHARS: ${MAX_DATASET_TOTAL_CHARS:-20000000}
       MAX_DATASET_COUNT: ${MAX_DATASET_COUNT:-50}
       MAX_DATASET_CONTEXT_CHARS: ${MAX_DATASET_CONTEXT_CHARS:-100000}
+      DATASET_UPLOAD_TMP_DIR: /app/data/dataset-uploads
+      DATASET_SCHEMA_MIN_OVERLAP: ${DATASET_SCHEMA_MIN_OVERLAP:-0.4}
+      ANALYSIS_RUN_MAX_PER_ORG: ${ANALYSIS_RUN_MAX_PER_ORG:-50}
+      ANALYSIS_RUN_MAX_RESULT_CHARS: ${ANALYSIS_RUN_MAX_RESULT_CHARS:-2000000}
+      KPI_EVALUATION_MAX_PER_KPI: ${KPI_EVALUATION_MAX_PER_KPI:-180}
       MAX_RAG_CONTEXT_CHARS: ${MAX_RAG_CONTEXT_CHARS:-40000}
       MAX_DOCUMENT_CHARS: ${MAX_DOCUMENT_CHARS:-500000}
       MAX_DOCUMENT_TOTAL_CHARS: ${MAX_DOCUMENT_TOTAL_CHARS:-2000000}
       MAX_DOCUMENT_COUNT: ${MAX_DOCUMENT_COUNT:-50}
-      AUDIT_MAX_ENTRIES_PER_USER: ${AUDIT_MAX_ENTRIES_PER_USER:-2000}
+      AUDIT_MAX_ENTRIES_PER_ORG: ${AUDIT_MAX_ENTRIES_PER_ORG:-10000}
       NOTIFICATION_MAX_ENTRIES_PER_USER: ${NOTIFICATION_MAX_ENTRIES_PER_USER:-500}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      IYZICO_API_KEY: ${IYZICO_API_KEY:-}
+      IYZICO_SECRET_KEY: ${IYZICO_SECRET_KEY:-}
+      IYZICO_BASE_URL: ${IYZICO_BASE_URL:-https://sandbox-api.iyzipay.com}
+      IYZICO_MERCHANT_ID: ${IYZICO_MERCHANT_ID:-}
+      IYZICO_PLAN_PROFESSIONAL: ${IYZICO_PLAN_PROFESSIONAL:-}
+      IYZICO_PLAN_ENTERPRISE: ${IYZICO_PLAN_ENTERPRISE:-}
+      AI_CREDIT_1000_PRICE_TRY: ${AI_CREDIT_1000_PRICE_TRY:-}
+      AI_CREDIT_5000_PRICE_TRY: ${AI_CREDIT_5000_PRICE_TRY:-}
       ML_ANALYZE_ASYNC_THRESHOLD_CHARS: ${ML_ANALYZE_ASYNC_THRESHOLD_CHARS:-1000000}
       JSON_BODY_LIMIT: ${JSON_BODY_LIMIT:-1mb}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     ports:
       - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-3000}:3010"
     volumes:
@@ -77,9 +100,128 @@ services:
     depends_on:
       ml-service:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     mem_limit: 1200m
     cpus: 1.5
     stop_grace_period: 20s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    init: true
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-reai}
+      POSTGRES_USER: ${POSTGRES_USER:-reai_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-before-production}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-reai_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-change-me-before-production-app-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /run/postgresql:rw,noexec,nosuid,size=16m
+    networks:
+      - backend
+      - edge
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 768m
+    cpus: 1.0
+    stop_grace_period: 30s
+
+  postgres-backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-reai}
+      POSTGRES_USER: ${POSTGRES_USER:-reai_admin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-change-me-before-production}
+      POSTGRES_BACKUP_INTERVAL_SECONDS: ${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}
+      POSTGRES_BACKUP_RETENTION_DAYS: ${POSTGRES_BACKUP_RETENTION_DAYS:-14}
+    command: ["/scripts/backup-loop.sh"]
+    volumes:
+      - postgres-backups:/backups
+      - ./deploy/backup:/scripts:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
+
+  postgres-restore-check:
+    image: postgres:17-alpine
+    profiles: ["maintenance"]
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-reai}
+      POSTGRES_USER: ${POSTGRES_USER:-reai_admin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-change-me-before-production}
+      POSTGRES_RESTORE_CHECK_DB: reai_restore_check
+    command: ["/scripts/restore-check.sh"]
+    volumes:
+      - postgres-backups:/backups:ro
+      - ./deploy/backup:/scripts:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=15d"]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - backend
+      - edge
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 384m
+    cpus: 0.5
 
   ml-service:
     <<: *service-hardening
@@ -146,6 +288,9 @@ services:
 
 volumes:
   app-data:
+  postgres-data:
+  postgres-backups:
+  prometheus-data:
 
 networks:
   edge:

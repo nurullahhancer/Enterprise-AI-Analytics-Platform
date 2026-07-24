@@ -76,10 +76,10 @@ export default function Reports() {
   return (
     <div className="p-4 md:p-12 flex-1 flex flex-col gap-4 md:gap-8 overflow-y-auto max-w-6xl mx-auto w-full">
       {/* Header */}
-      <div className="border-b border-white/5 pb-3 md:pb-4">
+      <div className="border-b border-slate-200 pb-3 md:pb-4 dark:border-white/5">
         <div>
           <h2 className="text-2xl md:text-4xl font-black uppercase tracking-tighter">Raporlar</h2>
-          <p className="text-[10px] md:text-sm opacity-40 font-mono mt-1 md:mt-2 uppercase tracking-widest">İndirebileceğiniz rapor türleri ve içerikleri.</p>
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500 md:mt-2 md:text-sm dark:text-white/40">İndirebileceğiniz rapor türleri ve içerikleri.</p>
         </div>
       </div>
 
@@ -89,28 +89,28 @@ export default function Reports() {
           aria-live="polite"
           className={status.type === 'error'
             ? 'bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-2xl px-4 py-3 text-xs font-bold uppercase tracking-widest'
-            : 'bg-[#FFD700]/10 border border-[#FFD700]/20 text-[#FFD700] rounded-2xl px-4 py-3 text-xs font-bold uppercase tracking-widest'}
+            : 'rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs font-bold uppercase tracking-widest text-indigo-700 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10 dark:text-[#FFD700]'}
         >
           {status.text}
         </div>
       )}
 
       {/* Report List - Card style on mobile */}
-      <div className="flex flex-col gap-3 md:gap-0 md:bg-white/5 md:border md:border-white/5 md:rounded-3xl md:overflow-hidden">
+      <div className="flex flex-col gap-3 md:gap-0 md:overflow-hidden md:rounded-3xl md:border md:border-slate-200 md:bg-white dark:md:border-white/5 dark:md:bg-white/5">
         {/* Reports */}
-        <div className="flex flex-col gap-3 md:gap-0 md:divide-y md:divide-white/5">
+        <div className="flex flex-col gap-3 md:gap-0 md:divide-y md:divide-slate-100 dark:md:divide-white/5">
           {reports.map((report) => (
-            <div key={report.id} className="bg-white/5 md:bg-transparent p-4 md:p-6 rounded-2xl md:rounded-none border border-white/5 md:border-0 flex items-center justify-between hover:bg-white/5 transition-colors active:bg-white/10">
+            <div key={report.id} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 transition-colors hover:bg-slate-50 active:bg-slate-100 md:rounded-none md:border-0 md:bg-transparent md:p-6 dark:border-white/5 dark:bg-white/5 dark:hover:bg-white/5 dark:active:bg-white/10 dark:md:bg-transparent">
               <div className="flex items-center gap-3 md:gap-6 flex-1 min-w-0">
                 <div className="w-10 h-10 md:w-14 md:h-14 rounded-xl flex items-center justify-center border shadow-lg shrink-0 bg-pink-500/10 border-pink-500/20 text-pink-400">
                   <FileText className="w-5 h-5 md:w-7 md:h-7" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <h4 className="text-sm md:text-lg font-bold uppercase tracking-tight truncate">{report.title}</h4>
-                  <p className="text-[9px] md:text-xs opacity-50 truncate mt-0.5">{report.details}</p>
-                  <div className="flex items-center gap-2 md:gap-4 mt-1.5 text-[9px] md:text-[10px] font-mono opacity-40 uppercase tracking-widest">
+                  <p className="mt-0.5 truncate text-[9px] text-slate-500 md:text-xs dark:text-white/50">{report.details}</p>
+                  <div className="mt-1.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-widest text-slate-400 md:gap-4 md:text-[10px] dark:text-white/40">
                     <span>{report.date}</span>
-                    <span className="w-1 h-1 bg-white/40 rounded-full"></span>
+                    <span className="h-1 w-1 rounded-full bg-slate-300 dark:bg-white/40"></span>
                     <span>{report.size}</span>
                   </div>
                 </div>

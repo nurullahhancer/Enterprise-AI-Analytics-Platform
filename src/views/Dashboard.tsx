@@ -1,16 +1,18 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { 
   Area, AreaChart, Bar, BarChart, CartesianGrid, 
-  ResponsiveContainer, Tooltip, XAxis, YAxis, LineChart, Line 
+  ResponsiveContainer, Tooltip, XAxis, YAxis
 } from 'recharts';
 import { 
-  Activity, AlertTriangle, BarChart3, Brain, Download, 
-  Lightbulb, LineChart as LineIcon, PieChart,
-  Sparkles, Table2, TrendingUp, HelpCircle 
+  Activity, AlertTriangle, BarChart3, Brain, CalendarDays,
+  CheckCircle2, ChevronDown, ChevronUp, Database, Download,
+  Hash, KeyRound, Lightbulb, LineChart as LineIcon, PieChart,
+  Sparkles, Table2, Tags, TrendingUp, Type as TypeIcon, WalletCards
 } from 'lucide-react';
 import { authHeaders, getApiUrl } from '../lib/api';
 import { downloadReport } from '../lib/reports';
 import { cn } from '../lib/utils';
+import AnalysisStudio from './AnalysisStudio';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,17 +27,31 @@ interface DashboardWidget {
   data: any;
 }
 
+interface ProfileColumn {
+  name: string;
+  type: string;
+  nullRate: number;
+  uniqueCount: number;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  topValues: Array<{ value: string; count: number }>;
+}
+
 interface DynamicDashboardResponse {
   datasetId?: number;
+  datasetCount?: number;
   datasetFilename?: string;
   emptyState: string | null;
   profile: {
     rowCount: number; 
     columnCount: number; 
     datasetType: string;
-    columns: Array<{ name: string; type: string; nullRate: number; uniqueCount: number; mean: number | null }>;
+    columns: ProfileColumn[];
   } | null;
   widgets: DashboardWidget[];
+  template?: { key: string; label: string; reason: string };
+  preference?: { order: string[]; hidden: string[]; updatedAt: string | null };
 }
 
 interface AutoInsightResponse {
@@ -45,34 +61,6 @@ interface AutoInsightResponse {
   summary: string;
   items: Array<{ title: string; description: string; severity: 'info' | 'success' | 'warning'; score: number }>;
 }
-
-interface MlForecast {
-  filename: string;
-  model: string;
-  targetColumn: string | null;
-  rowCount: number;
-  featureCount: number;
-  trainRows: number;
-  testRows: number;
-  accuracy: number;
-  series: Array<{ row: string; actual: number | null; predicted: number }>;
-  forecast: Array<{ row: string; predicted: number }>;
-  anomalies: Array<{ name: string; value: number }>;
-}
-
-const emptyForecast: MlForecast = {
-  filename: 'Veri seti yok',
-  model: 'Model beklemede',
-  targetColumn: null,
-  rowCount: 0,
-  featureCount: 0,
-  trainRows: 0,
-  testRows: 0,
-  accuracy: 0,
-  series: [],
-  forecast: [],
-  anomalies: []
-};
 
 const emptyDashboard: DynamicDashboardResponse = {
   emptyState: 'Veri arttıkça burada içgörüler görünecek. Başlamak için veri setlerinizi yükleyin.',
@@ -92,13 +80,27 @@ const confidenceLabel = (v?: number) => `${Math.round((v ?? 0) * 100)}% heuristi
 
 // ─── Widget Components ────────────────────────────────────────────────────────
 
-function WidgetShell({ widget, children, isDark }: { widget: DashboardWidget; children: React.ReactNode; isDark: boolean }) {
+function WidgetShell({
+  widget,
+  children,
+  isDark,
+  description
+}: {
+  widget: DashboardWidget;
+  children: React.ReactNode;
+  isDark: boolean;
+  description?: string;
+}) {
   return (
     <section className="bg-white dark:bg-white/5 border border-slate-200/60 dark:border-white/5 rounded-2xl p-5 shadow-sm min-w-0">
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           <h3 className="text-sm md:text-base font-bold text-slate-800 dark:text-[#F0F0F0] truncate uppercase tracking-tight">{widget.title}</h3>
-          <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-white/40 mt-1">ÖNCELİK SKORU: {Math.round(widget.score * 100)}</p>
+          {description ? (
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500 dark:text-white/50">{description}</p>
+          ) : (
+            <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-white/40 mt-1">ÖNCELİK SKORU: {Math.round(widget.score * 100)}</p>
+          )}
         </div>
         {widget.confidence !== undefined && (
           <span className="shrink-0 px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-[#FFD700]/10 text-indigo-600 dark:text-[#FFD700] border border-indigo-100 dark:border-[#FFD700]/20 text-[10px] font-bold uppercase tracking-wider">
@@ -162,23 +164,24 @@ function TrendWidget({ widget, isDark }: { widget: DashboardWidget; isDark: bool
 
 function ForecastWidget({ widget, isDark }: { widget: DashboardWidget; isDark: boolean }) {
   const points = widget.data.data ?? [];
+  const expectedTotal = points.reduce((sum: number, point: any) => sum + Number(point.predicted ?? 0), 0);
   return (
     <WidgetShell widget={widget} isDark={isDark}>
-      <div className="flex flex-col gap-1 mb-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-white/60">
+      <div className="mb-4 flex flex-col gap-1 text-xs font-bold text-slate-500 dark:text-white/60">
         <div className="flex items-center gap-3">
           <Brain className="w-4 h-4 text-indigo-600 dark:text-[#FFD700]" />
-          <span>{widget.data.targetColumn || 'Hedef kolon yok'}</span>
+          <span>{widget.data.targetColumn || 'Tahmin edilecek bilgi seçilmedi'}</span>
         </div>
-        <div className="pl-7">{widget.data.model} | RMSE {Number(widget.data.metrics?.rmse ?? 0)}</div>
+        {points.length > 0 && <div className="pl-7 text-sm text-slate-800 dark:text-white">Önümüzdeki {points.length} dönemde yaklaşık {formatMoney(expectedTotal)} bekleniyor.</div>}
       </div>
       {widget.data.debug?.rmseIsSuspicious && (
         <div className="mb-4 rounded-xl border border-pink-500/20 bg-pink-500/10 px-3 py-2 text-xs font-bold text-pink-200">
-          RMSE 0 göründüğü için güven skoru düşürüldü.
+          Geçmiş kayıtlar çok benzer olduğu için bu tahmini temkinli değerlendirin.
         </div>
       )}
       {points.length === 0 && (
         <div className="mb-4 rounded-xl border border-slate-100 dark:border-white/10 bg-slate-50 dark:bg-white/5 px-3 py-2 text-xs font-bold text-slate-500 dark:text-white/70">
-          Tahmin üretmek için en az 3 sayısal hedef değeri gerekiyor.
+          Tahmin oluşturmak için en az 3 geçmiş sayısal değer gerekiyor.
         </div>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -256,11 +259,19 @@ function TopNWidget({ widget, isDark }: { widget: DashboardWidget; isDark: boole
 
 function ProfileWidget({ widget, isDark }: { widget: DashboardWidget; isDark: boolean }) {
   const profile = widget.data;
-  const columns = Array.isArray(profile.columns) ? profile.columns : [];
-  const numericColumns = columns.filter((c: any) => c.type === 'numeric' || c.type === 'currency').length;
-  const dateColumns = columns.filter((c: any) => c.type === 'datetime').length;
-  const missingColumns = columns.filter((c: any) => Number(c.nullRate ?? 0) >= 20);
-  const qualityScore = columns.length === 0 ? 0 : Math.round(columns.reduce((s: number, c: any) => s + (100 - Number(c.nullRate ?? 0)), 0) / columns.length);
+  const columns: ProfileColumn[] = Array.isArray(profile.columns) ? profile.columns : [];
+  const [showAllColumns, setShowAllColumns] = useState(false);
+  const numericColumns = columns.filter((column) => column.type === 'numeric' || column.type === 'currency');
+  const dateColumns = columns.filter((column) => column.type === 'datetime');
+  const categoricalColumns = columns.filter((column) => column.type === 'categorical' || column.type === 'text');
+  const identifierColumns = columns.filter((column) => column.type === 'id');
+  const attentionColumns = columns.filter((column) => Number(column.nullRate ?? 0) >= 10);
+  const criticalColumns = columns.filter((column) => Number(column.nullRate ?? 0) >= 50);
+  const readyColumns = columns.filter((column) => Number(column.nullRate ?? 0) < 50);
+  const qualityScore = columns.length === 0
+    ? 0
+    : Math.round(columns.reduce((sum, column) => sum + (100 - Number(column.nullRate ?? 0)), 0) / columns.length);
+  const visibleColumns = showAllColumns ? columns : columns.slice(0, 6);
   
   const typeLabels: Record<string, string> = { 
     time_series: 'Zaman Serisi', 
@@ -269,69 +280,212 @@ function ProfileWidget({ widget, isDark }: { widget: DashboardWidget; isDark: bo
     financial: 'Finansal Veri', 
     categorical: 'Kategorik Veri' 
   };
-  const colLabels: Record<string, string> = { numeric: 'Sayı', currency: 'Para', datetime: 'Tarih', categorical: 'Metin' };
+  const colLabels: Record<string, string> = {
+    numeric: 'Ölçüm', currency: 'Para', datetime: 'Tarih', categorical: 'Kategori',
+    text: 'Metin', id: 'Kimlik / referans'
+  };
+  const quality = qualityScore >= 95 && criticalColumns.length === 0
+    ? {
+        title: 'Veriniz analize hazır',
+        description: 'Alanların büyük bölümü dolu ve doğrudan analiz edilebilir.',
+        textClass: 'text-emerald-700 dark:text-emerald-300',
+        surfaceClass: 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/20 dark:bg-emerald-500/10',
+        barClass: 'bg-emerald-500'
+      }
+    : qualityScore >= 80 && criticalColumns.length === 0
+      ? {
+          title: 'Veriniz kullanılabilir durumda',
+          description: 'Analize başlayabilirsiniz; birkaç alanı kontrol etmek sonucu iyileştirir.',
+          textClass: 'text-amber-700 dark:text-[#FFD700]',
+          surfaceClass: 'border-amber-200 bg-amber-50 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10',
+          barClass: 'bg-amber-500 dark:bg-[#FFD700]'
+        }
+      : {
+          title: 'Analizden önce kısa bir kontrol önerilir',
+          description: 'Eksik alanlar sonuçları etkileyebilir; işaretlenen alanları gözden geçirin.',
+          textClass: 'text-rose-700 dark:text-rose-300',
+          surfaceClass: 'border-rose-200 bg-rose-50 dark:border-rose-500/20 dark:bg-rose-500/10',
+          barClass: 'bg-rose-500'
+        };
+  const typeIcon = (type: string) => {
+    if (type === 'currency') return <WalletCards className="h-4 w-4" />;
+    if (type === 'numeric') return <Hash className="h-4 w-4" />;
+    if (type === 'datetime') return <CalendarDays className="h-4 w-4" />;
+    if (type === 'id') return <KeyRound className="h-4 w-4" />;
+    if (type === 'categorical') return <Tags className="h-4 w-4" />;
+    return <TypeIcon className="h-4 w-4" />;
+  };
+  const columnSummary = (column: ProfileColumn): string => {
+    if (column.type === 'id') return 'Kayıtları ayırt eder; toplam ve ortalama hesabına katılmaz.';
+    if (column.type === 'datetime') return 'Sıralama, dönem karşılaştırması ve trend için kullanılır.';
+    if ((column.type === 'numeric' || column.type === 'currency') && column.mean !== null) {
+      const format = column.type === 'currency' ? 'currency' : undefined;
+      const parts = [`Ortalama ${formatValue(Number(column.mean), format)}`];
+      if (column.min !== null) parts.push(`en düşük ${formatValue(Number(column.min), format)}`);
+      if (column.max !== null) parts.push(`en yüksek ${formatValue(Number(column.max), format)}`);
+      return parts.join(' · ');
+    }
+    const mostCommon = Array.isArray(column.topValues) ? column.topValues[0] : null;
+    return mostCommon ? `En sık görülen: ${mostCommon.value} (${mostCommon.count} kayıt)` : 'Özetlenecek dolu değer bulunamadı.';
+  };
+  const columnHealth = (column: ProfileColumn) => {
+    const nullRate = Number(column.nullRate ?? 0);
+    if (nullRate >= 50) return {
+      label: 'Eksik yoğun',
+      className: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300'
+    };
+    if (nullRate >= 10) return {
+      label: 'Kontrol et',
+      className: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10 dark:text-[#FFD700]'
+    };
+    return {
+      label: 'Hazır',
+      className: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300'
+    };
+  };
+  const opportunities = [
+    dateColumns.length > 0 && `${dateColumns.length} tarih alanıyla dönem ve trend analizi`,
+    numericColumns.length > 0 && `${numericColumns.length} sayısal alanla karşılaştırma ve tahmin`,
+    categoricalColumns.length > 0 && `${categoricalColumns.length} grup alanıyla kırılım analizi`
+  ].filter((item): item is string => Boolean(item));
   
   return (
-    <WidgetShell widget={widget} isDark={isDark}>
-      <div className="rounded-2xl bg-slate-50 dark:bg-black/25 border border-slate-200/50 dark:border-white/5 p-4 mb-4">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-[#FFD700]/15 border border-indigo-100 dark:border-[#FFD700]/20 text-indigo-600 dark:text-[#FFD700] flex items-center justify-center shrink-0">
-            <Table2 className="w-5 h-5" />
+    <WidgetShell
+      widget={widget}
+      isDark={isDark}
+      description="Verinizin yapısını, ne kadarının analize hazır olduğunu ve dikkat edilmesi gereken alanları gösterir."
+    >
+      <div className={cn('mb-4 rounded-2xl border p-4 md:p-5', quality.surfaceClass)}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/70 shadow-sm dark:bg-black/20', quality.textClass)}>
+              {qualityScore >= 80 && criticalColumns.length === 0
+                ? <CheckCircle2 className="h-6 w-6" />
+                : <AlertTriangle className="h-6 w-6" />}
+            </div>
+            <div className="min-w-0">
+              <p className={cn('text-base font-extrabold', quality.textClass)}>{quality.title}</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-white/60">{quality.description}</p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-slate-800 dark:text-white">{typeLabels[profile.datasetType] || 'Genel Veri Seti'}</p>
-            <p className="text-xs text-slate-500 dark:text-white/60 mt-1">
-              {missingColumns.length > 0 ? `${missingColumns.length} kolonda eksik veri var.` : 'Tüm kolonlar analiz edilebilir düzeyde.'}
-            </p>
+          <div className="shrink-0 sm:text-right">
+            <div className={cn('text-3xl font-black tracking-tight', quality.textClass)}>%{qualityScore}</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/40">veri doluluğu</div>
           </div>
+        </div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/70 dark:bg-black/25">
+          <div className={cn('h-full rounded-full transition-all duration-500', quality.barClass)} style={{ width: `${qualityScore}%` }} />
         </div>
       </div>
       
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          ['Toplam Kayıt', profile.rowCount, ''], 
-          ['Kolon Sayısı', profile.columnCount, ''], 
-          ['Sayısal Kolon', numericColumns, 'text-emerald-500'], 
-          ['Doluluk Oranı', `${qualityScore}%`, qualityScore >= 80 ? 'text-emerald-500' : 'text-indigo-600 dark:text-[#FFD700]']
-        ].map(([label, val, cls]) => (
-          <div key={label as string} className="rounded-xl bg-slate-50 dark:bg-black/25 border border-slate-200/50 dark:border-white/5 p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">{label as string}</p>
-            <p className={cn('text-xl font-black text-slate-800 dark:text-white', cls as string)}>{val as any}</p>
+          { label: 'Kayıt', value: new Intl.NumberFormat('tr-TR').format(Number(profile.rowCount ?? 0)), helper: 'incelenen satır', icon: <Database className="h-4 w-4" /> },
+          { label: 'Alan', value: profile.columnCount, helper: 'toplam bilgi alanı', icon: <Table2 className="h-4 w-4" /> },
+          { label: 'Analize Uygun', value: readyColumns.length, helper: `${columns.length} alanın içinde`, icon: <CheckCircle2 className="h-4 w-4" /> },
+          { label: 'Veri Türü', value: typeLabels[profile.datasetType] || 'Genel', helper: 'otomatik tanındı', icon: <BarChart3 className="h-4 w-4" /> }
+        ].map((metric) => (
+          <div key={metric.label} className="rounded-xl border border-slate-200/60 bg-slate-50 p-3 dark:border-white/5 dark:bg-black/25">
+            <div className="flex items-center gap-2 text-indigo-600 dark:text-[#FFD700]">
+              {metric.icon}
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">{metric.label}</p>
+            </div>
+            <p className="mt-2 truncate text-xl font-black text-slate-800 dark:text-white" title={String(metric.value)}>{metric.value}</p>
+            <p className="mt-0.5 text-[10px] text-slate-400 dark:text-white/35">{metric.helper}</p>
           </div>
         ))}
       </div>
       
-      {dateColumns > 0 && (
-        <div className="mb-4 rounded-xl bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5 text-xs text-emerald-600 dark:text-emerald-300 flex items-center gap-2">
-          <Activity className="w-4 h-4 shrink-0" />
-          Tarih alanı bulundu; trend tahmini için uygun.
-        </div>
-      )}
-      {missingColumns.length > 0 && (
-        <div className="mb-4 rounded-xl bg-amber-500/5 dark:bg-[#FFD700]/10 border border-amber-500/20 dark:border-[#FFD700]/20 px-3 py-2.5 text-xs text-amber-600 dark:text-[#FFD700] flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
-          Eksik veri içeren alanlar: {missingColumns.slice(0, 2).map((c: any) => c.name).join(', ')}
-        </div>
-      )}
-      <div className="space-y-2">
-        {columns.slice(0, 6).map((c: any) => (
-          <div key={c.name} className="rounded-xl bg-slate-50 dark:bg-black/20 border border-slate-200/30 dark:border-transparent px-3 py-2">
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="truncate font-bold text-slate-800 dark:text-white">{c.name}</span>
-              <span className="text-indigo-600 dark:text-[#FFD700] font-bold uppercase text-[10px] tracking-wider">
-                {colLabels[c.type] || 'Alan'}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center justify-between gap-3 text-[10px] text-slate-400 dark:text-white/40 font-medium">
-              <span>{c.uniqueCount} farklı değer</span>
-              <span>{Number(c.nullRate ?? 0) > 0 ? `%${c.nullRate} eksik veri` : 'Eksik veri yok'}</span>
-            </div>
-            {(c.type === 'numeric' || c.type === 'currency') && c.mean !== null && (
-              <p className="mt-1 text-[10px] text-emerald-600 dark:text-emerald-300/80">Ortalama: {formatValue(Number(c.mean))}</p>
+      <div className="mb-5 grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 dark:border-white/10 dark:bg-white/5">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-white">
+            <Sparkles className="h-4 w-4 text-indigo-600 dark:text-[#FFD700]" />
+            Bu veriyle neler yapılabilir?
+          </div>
+          <div className="mt-3 space-y-2">
+            {opportunities.length > 0 ? opportunities.map((opportunity) => (
+              <div key={opportunity} className="flex items-start gap-2 text-xs leading-relaxed text-slate-600 dark:text-white/60">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                <span>{opportunity}</span>
+              </div>
+            )) : (
+              <p className="text-xs leading-relaxed text-slate-500 dark:text-white/50">Alan türleri netleştikçe uygun analiz önerileri burada görünür.</p>
             )}
           </div>
-        ))}
+        </div>
+        <div className="rounded-xl border border-slate-200/60 bg-slate-50 p-4 dark:border-white/10 dark:bg-black/25">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-white">
+            {attentionColumns.length > 0
+              ? <AlertTriangle className="h-4 w-4 text-amber-500 dark:text-[#FFD700]" />
+              : <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+            Dikkat edilmesi gerekenler
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-slate-600 dark:text-white/60">
+            {criticalColumns.length > 0
+              ? `${criticalColumns.slice(0, 2).map((column) => column.name).join(', ')} alanlarında verinin yarısından fazlası eksik. Analizden önce tamamlayın veya kapsam dışı bırakın.`
+              : attentionColumns.length > 0
+                ? `${attentionColumns.slice(0, 3).map((column) => column.name).join(', ')} alanlarında eksik değerler var. Analiz yapılabilir, ancak bu alanları kontrol etmek sonucu iyileştirir.`
+                : 'Belirgin bir eksik veri sorunu görünmüyor. Doğrudan analize geçebilirsiniz.'}
+          </p>
+          {identifierColumns.length > 0 && (
+            <p className="mt-2 text-[10px] leading-relaxed text-slate-400 dark:text-white/40">
+              {identifierColumns.length} kimlik alanı hesaplamalara katılmadan yalnızca kayıtları ayırt etmek için kullanılacak.
+            </p>
+          )}
+        </div>
       </div>
+
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h4 className="text-sm font-extrabold text-slate-800 dark:text-white">Alanları tanıyın</h4>
+          <p className="mt-1 text-xs text-slate-500 dark:text-white/45">Her alanın ne işe yaradığını ve veri durumunu sade biçimde görün.</p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[10px] font-bold text-slate-500 dark:text-white/45">
+          {numericColumns.length > 0 && <span>{numericColumns.length} sayısal</span>}
+          {dateColumns.length > 0 && <span>• {dateColumns.length} tarih</span>}
+          {categoricalColumns.length > 0 && <span>• {categoricalColumns.length} grup/metin</span>}
+        </div>
+      </div>
+
+      <div className="grid gap-2 lg:grid-cols-2">
+        {visibleColumns.map((column) => {
+          const health = columnHealth(column);
+          return (
+            <div key={column.name} className="rounded-xl border border-slate-200/60 bg-slate-50 p-3.5 dark:border-white/5 dark:bg-black/20">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600 shadow-sm dark:bg-white/5 dark:text-[#FFD700]">
+                    {typeIcon(column.type)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-bold text-slate-800 dark:text-white" title={column.name}>{column.name}</p>
+                    <p className="mt-0.5 text-[10px] font-medium text-indigo-600 dark:text-[#FFD700]/80">{colLabels[column.type] || 'Bilgi alanı'}</p>
+                  </div>
+                </div>
+                <span className={cn('shrink-0 rounded-full border px-2 py-1 text-[9px] font-bold', health.className)}>
+                  {health.label}
+                </span>
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-slate-600 dark:text-white/55">{columnSummary(column)}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400 dark:text-white/35">
+                <span>{new Intl.NumberFormat('tr-TR').format(column.uniqueCount)} farklı değer</span>
+                <span>{Number(column.nullRate ?? 0) > 0 ? `%${column.nullRate} eksik` : 'Eksik değer yok'}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {columns.length > 6 && (
+        <button
+          type="button"
+          onClick={() => setShowAllColumns((current) => !current)}
+          className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10"
+        >
+          {showAllColumns ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          {showAllColumns ? 'Alanları daralt' : `Tüm ${columns.length} alanı göster`}
+        </button>
+      )}
     </WidgetShell>
   );
 }
@@ -351,6 +505,7 @@ function renderWidget(widget: DashboardWidget, isDark: boolean) {
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState<DynamicDashboardResponse>(emptyDashboard);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState('');
   const [reportStatus, setReportStatus] = useState('');
   const [autoInsights, setAutoInsights] = useState<AutoInsightResponse | null>(null);
   const [isInsightLoading, setIsInsightLoading] = useState(false);
@@ -358,17 +513,19 @@ export default function Dashboard() {
   
   // Tab control inside Dashboard
   const [subTab, setSubTab] = useState<'overview' | 'forecast'>('overview');
-  const [forecastData, setForecastData] = useState<MlForecast>(emptyForecast);
-  const [forecastStatus, setForecastStatus] = useState('');
   
   // Drag and Drop Layout states
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [hiddenWidgetIds, setHiddenWidgetIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (dashboard.widgets && dashboard.widgets.length > 0) {
-      const savedOrder = localStorage.getItem(`reai_widget_order_${dashboard.datasetFilename}`);
+      const serverOrder = dashboard.preference?.order || [];
+      const savedOrder = serverOrder.length > 0
+        ? JSON.stringify(serverOrder)
+        : localStorage.getItem(`reai_widget_order_${dashboard.datasetFilename}`);
       if (savedOrder) {
         try {
           const orderedIds = JSON.parse(savedOrder);
@@ -381,10 +538,24 @@ export default function Dashboard() {
       } else {
         setWidgets(dashboard.widgets);
       }
+      setHiddenWidgetIds(dashboard.preference?.hidden || []);
     } else {
       setWidgets([]);
     }
   }, [dashboard]);
+
+  const persistDashboardPreference = useCallback(async (order: string[], hidden: string[]) => {
+    try {
+      const response = await fetch(getApiUrl('/api/dashboard/preference'), {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order, hidden })
+      });
+      if (!response.ok) throw new Error('Dashboard düzeni kaydedilemedi.');
+    } catch (error) {
+      setReportStatus(error instanceof Error ? error.message : 'Dashboard düzeni kaydedilemedi.');
+    }
+  }, []);
 
   const handleDragStart = (id: string) => {
     if (!isEditMode) return;
@@ -408,7 +579,16 @@ export default function Dashboard() {
 
     setWidgets(reordered);
     localStorage.setItem(`reai_widget_order_${dashboard.datasetFilename}`, JSON.stringify(reordered.map(w => w.id)));
+    void persistDashboardPreference(reordered.map((widget) => widget.id), hiddenWidgetIds);
     setDraggedId(null);
+  };
+
+  const toggleWidgetVisibility = (widgetId: string) => {
+    const hidden = hiddenWidgetIds.includes(widgetId)
+      ? hiddenWidgetIds.filter((id) => id !== widgetId)
+      : [...hiddenWidgetIds, widgetId];
+    setHiddenWidgetIds(hidden);
+    void persistDashboardPreference(widgets.map((widget) => widget.id), hidden);
   };
 
   // Theme check helper
@@ -426,6 +606,7 @@ export default function Dashboard() {
   // Load dashboard from all uploaded files.
   const loadDashboard = useCallback(async () => {
     setIsDashboardLoading(true);
+    setDashboardError('');
     setAutoInsights(null);
     try {
       const res = await fetch(getApiUrl('/api/dashboard/dynamic'), { headers: authHeaders() });
@@ -434,29 +615,16 @@ export default function Dashboard() {
       setDashboard(data);
     } catch (err) {
       console.error(err);
+      setDashboard(emptyDashboard);
+      setDashboardError(err instanceof Error ? err.message : 'Analiz kapsamı hazırlanamadı.');
     } finally {
       setIsDashboardLoading(false);
     }
   }, []);
 
-  // Load forecast metrics
-  const loadForecast = useCallback(async () => {
-    try {
-      const response = await fetch(getApiUrl('/api/ml/forecast'), { headers: authHeaders() });
-      const data = await response.json();
-      if (response.ok) {
-        setForecastData(data);
-        setForecastStatus(`${data.targetColumn || 'seçili alan'} için tahmin modeli hazır.`);
-      }
-    } catch (error) {
-      setForecastStatus('Tahmin modeli yüklenirken bir hata oluştu.');
-    }
-  }, []);
-
   useEffect(() => { 
     loadDashboard(); 
-    loadForecast();
-  }, [loadDashboard, loadForecast]);
+  }, [loadDashboard]);
 
   const hasDataset = Boolean(dashboard.profile);
 
@@ -488,12 +656,6 @@ export default function Dashboard() {
 
   const toggleInsightDetail = (title: string) => setExpandedInsights((cur) => ({ ...cur, [title]: !cur[title] }));
 
-  // Combined chart forecast series
-  const lineChartData = [
-    ...forecastData.series,
-    ...forecastData.forecast.map((point) => ({ row: point.row, actual: null, predicted: point.predicted }))
-  ];
-
   return (
     <div className="p-4 md:p-12 flex-1 flex flex-col gap-4 md:gap-8 overflow-y-auto">
       {/* Header */}
@@ -517,8 +679,14 @@ export default function Dashboard() {
             </h2>
             {dashboard.datasetFilename && (
               <p className="text-xs font-mono text-slate-400 dark:text-white/40 mt-1 truncate max-w-md">
-                Birleşik analiz kapsamı: {dashboard.datasetFilename}
+                İncelenen veriler: {dashboard.datasetFilename}
               </p>
+            )}
+            {dashboard.template && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-indigo-700 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10 dark:text-[#FFD700]">{dashboard.template.label} şablonu</span>
+                <span className="text-[10px] text-slate-400 dark:text-white/35">{dashboard.template.reason}</span>
+              </div>
             )}
           </div>
         </div>
@@ -549,7 +717,7 @@ export default function Dashboard() {
                   : "text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white"
               )}
             >
-              Tahmin Modeli (ML)
+              Gelecek Tahmini
             </button>
           </div>
 
@@ -570,38 +738,48 @@ export default function Dashboard() {
             </button>
           )}
 
-          <button
-            onClick={loadAutoInsights}
-            disabled={!hasDataset || isInsightLoading}
-            className={cn(
-              "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm border",
-              isDark 
-                ? "bg-[#FFD700] border-[#FFD700] text-black hover:bg-[#ffe033]" 
-                : "bg-[#4F46E5] border-[#4F46E5] text-white hover:bg-[#4338ca]"
-            )}
-          >
-            <Sparkles className="w-4 h-4 shrink-0" />
-            {isInsightLoading ? 'Hesaplanıyor' : 'Akıllı İçgörü'}
-          </button>
+          {subTab === 'overview' && (
+            <>
+              <button
+                onClick={loadAutoInsights}
+                disabled={!hasDataset || isInsightLoading}
+                className={cn(
+                  "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm border",
+                  isDark
+                    ? "bg-[#FFD700] border-[#FFD700] text-black hover:bg-[#ffe033]"
+                    : "bg-[#4F46E5] border-[#4F46E5] text-white hover:bg-[#4338ca]"
+                )}
+              >
+                <Sparkles className="w-4 h-4 shrink-0" />
+                {isInsightLoading ? 'Hesaplanıyor' : 'Akıllı İçgörü'}
+              </button>
 
-          <button
-            onClick={downloadDashboardReport}
-            disabled={!hasDataset}
-            className={cn(
-              "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed border",
-              isDark 
-                ? "border-white/20 hover:bg-white hover:text-black text-white" 
-                : "border-slate-300 hover:bg-slate-50 text-slate-700"
-            )}
-          >
-            <Download className="w-4 h-4 shrink-0" />
-            PDF Raporu
-          </button>
+              <button
+                onClick={downloadDashboardReport}
+                disabled={!hasDataset}
+                className={cn(
+                  "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed border",
+                  isDark
+                    ? "border-white/20 hover:bg-white hover:text-black text-white"
+                    : "border-slate-300 hover:bg-slate-50 text-slate-700"
+                )}
+              >
+                <Download className="w-4 h-4 shrink-0" />
+                CSV Raporu
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* Status Warning / Info */}
-      {reportStatus && (
+      {dashboardError && (
+        <div className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300" role="alert">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{dashboardError}</span>
+        </div>
+      )}
+      {subTab === 'overview' && reportStatus && (
         <div className={cn(
           "border rounded-2xl px-4 py-3 text-xs font-bold uppercase tracking-wider shadow-sm flex items-center gap-2",
           isDark 
@@ -623,7 +801,7 @@ export default function Dashboard() {
       )}
 
       {/* Auto Insights Drawer/Panel */}
-      {!isDashboardLoading && autoInsights && (
+      {subTab === 'overview' && !isDashboardLoading && autoInsights && (
         <section className={cn(
           "border rounded-2xl p-6 shadow-sm",
           isDark ? "bg-[#FFD700]/10 border-[#FFD700]/20" : "bg-indigo-50/50 border-indigo-100/50"
@@ -681,17 +859,35 @@ export default function Dashboard() {
 
       {/* Tab Contents */}
       {!isDashboardLoading && (
-        dashboard.widgets.length === 0 ? (
+        subTab === 'forecast' ? (
+          <AnalysisStudio
+            profile={dashboard.profile}
+            datasetFilename={dashboard.datasetFilename}
+            datasetCount={dashboard.datasetCount}
+            isDark={isDark}
+          />
+        ) : dashboard.widgets.length === 0 ? (
           <div className="min-h-[380px] flex flex-col items-center justify-center text-center border border-dashed border-slate-300 dark:border-white/10 rounded-3xl bg-white dark:bg-white/5 px-6">
             <LineIcon className="w-12 h-12 text-slate-400 dark:text-[#FFD700] mb-4" />
             <h3 className="text-lg font-bold text-slate-800 dark:text-white uppercase tracking-tight">Analiz Edilecek Veri Bekleniyor</h3>
             <p className="text-sm text-slate-500 dark:text-white/50 max-w-md mt-2 leading-relaxed">{dashboard.emptyState}</p>
           </div>
         ) : (
-          subTab === 'overview' ? (
-            /* OVERVIEW TAB */
+          /* OVERVIEW TAB */
+          <div className="space-y-4">
+            {isEditMode && (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-indigo-300 bg-indigo-50/50 p-3 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/5">
+                <span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/45">Görünür kartlar</span>
+                {dashboard.widgets.map((widget) => (
+                  <label key={widget.id} className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold dark:border-white/10 dark:bg-black/20">
+                    <input type="checkbox" checked={!hiddenWidgetIds.includes(widget.id)} onChange={() => toggleWidgetVisibility(widget.id)} />
+                    {widget.title}
+                  </label>
+                ))}
+              </div>
+            )}
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-              {widgets.map((widget) => (
+              {widgets.filter((widget) => !hiddenWidgetIds.includes(widget.id)).map((widget) => (
                 <div
                   key={widget.id}
                   draggable={isEditMode}
@@ -716,80 +912,8 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
-          ) : (
-            /* ML FORECAST TAB */
-            <div className="flex flex-col gap-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-5 bg-white dark:bg-white/5 rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">HEURİSTİK UYUM</p>
-                  <p className="text-3xl font-black text-indigo-600 dark:text-[#FFD700] mt-3">{forecastData.accuracy}%</p>
-                  <p className="mt-2 text-[10px] text-slate-400 dark:text-white/40 font-mono">Geçmiş eğilime göre</p>
-                </div>
-
-                <div className="p-5 bg-white dark:bg-white/5 rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">GÖZLEMLENEN ALAN</p>
-                  <p className="text-3xl font-black text-emerald-600 dark:text-emerald-400 mt-3 truncate">{forecastData.targetColumn || 'Bulunmadı'}</p>
-                  <p className="mt-2 text-[10px] text-slate-400 dark:text-white/40 font-mono">Hedef tahmin parametresi</p>
-                </div>
-
-                <div className="p-5 bg-white dark:bg-white/5 rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">EĞİTİM VERİSİ</p>
-                  <p className="text-3xl font-black text-pink-600 dark:text-pink-400 mt-3">{forecastData.trainRows} Satır</p>
-                  <p className="mt-2 text-[10px] text-slate-400 dark:text-white/40 font-mono">Makine öğrenmesinde işlenen</p>
-                </div>
-
-                <div className="p-5 bg-white dark:bg-white/5 rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-white/40">AYKIRI DATA</p>
-                  <p className="text-3xl font-black text-cyan-600 dark:text-cyan-400 mt-3">{forecastData.anomalies.length} Adet</p>
-                  <p className="mt-2 text-[10px] text-slate-400 dark:text-white/40 font-mono">Z-score ile tespit edilen</p>
-                </div>
-              </div>
-
-              <div className="bg-white dark:bg-white/5 p-6 md:p-8 rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm">
-                <h3 className="text-base font-bold text-slate-800 dark:text-white uppercase tracking-tight mb-2">Makine Öğrenmesi Değer ve Tahmin Grafiği</h3>
-                <div className="flex items-center gap-4 mb-6 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-white/50">
-                  <span className="flex items-center gap-2"><span className="h-0.5 w-5 bg-indigo-600 dark:bg-white" /> Gerçekleşen</span>
-                  <span className="flex items-center gap-2"><span className="h-0.5 w-5 border-t-2 border-dashed border-indigo-600 dark:border-[#FFD700]" /> Tahmin</span>
-                </div>
-                <div className="h-[280px] md:h-[400px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={lineChartData.length > 0 ? lineChartData : [{ row: 'Veri yok', actual: 0, predicted: 0 }]} margin={{ top: 20, right: 10, left: -20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "#222" : "#E2E8F0"} />
-                      <XAxis dataKey="row" axisLine={false} tickLine={false} tick={{fill: isDark ? '#888' : '#64748B', fontSize: 10, fontFamily: 'monospace'}} />
-                      <YAxis axisLine={false} tickLine={false} tick={{fill: isDark ? '#888' : '#64748B', fontSize: 10, fontFamily: 'monospace'}} />
-                      <Tooltip 
-                        contentStyle={isDark 
-                          ? {backgroundColor: '#111', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px'}
-                          : {backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', color: '#000', fontSize: '12px'}
-                        } 
-                        formatter={(value: any, name: string) => [value, name === 'actual' ? 'Gerçekleşen' : 'Tahmin']}
-                      />
-                      <Line type="monotone" dataKey="actual" stroke={isDark ? "#fff" : "#4F46E5"} strokeWidth={3} dot={{r: 4, fill: isDark ? '#fff' : '#4F46E5'}} name="Gerçekleşen" />
-                      <Line type="monotone" dataKey="predicted" stroke={isDark ? "#FFD700" : "#4F46E5"} strokeWidth={3} strokeDasharray="5 5" dot={{r: 4, fill: isDark ? '#FFD700' : '#4F46E5'}} name="Tahmin" />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {forecastData.anomalies.length > 0 && (
-                <div className="bg-pink-500/5 dark:bg-pink-500/10 border border-pink-500/20 rounded-2xl p-5 shadow-sm">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-pink-600 dark:text-pink-400 mb-3 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" />
-                    Bulunan Aykırı Veriler
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {forecastData.anomalies.map((item) => (
-                      <div key={item.name} className="flex justify-between p-3 rounded-xl bg-white dark:bg-black/20 border border-slate-100 dark:border-white/5 text-sm text-slate-700 dark:text-slate-200">
-                        <span>{item.name}</span>
-                        <strong className="text-pink-600 dark:text-pink-400">{item.value}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+          </div>
           )
-        )
       )}
 
       {/* Footer Profile Data */}

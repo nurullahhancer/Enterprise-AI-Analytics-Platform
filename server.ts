@@ -7,6 +7,11 @@ import { authenticateJWT } from './src/server/index';
 import { checkDatabase, closeDatabase, databaseReady } from './src/lib/db';
 import { isAuthConfigured } from './src/lib/auth';
 import { getAiConfiguration } from './src/server/ai/provider';
+import { getIyzicoBillingConfiguration } from './src/lib/billing';
+import { isEmailConfigured } from './src/lib/email';
+import { startConnectorScheduler, stopConnectorScheduler } from './src/server/connectors/scheduler';
+import { startRetentionScheduler, stopRetentionScheduler } from './src/server/governance/scheduler';
+import { metricsMiddleware, renderMetrics } from './src/lib/metrics';
 
 // Route modules
 import authRouter from './src/server/routes/auth';
@@ -16,6 +21,8 @@ import mlRouter from './src/server/routes/ml';
 import reportsRouter from './src/server/routes/reports';
 import chatRouter from './src/server/routes/chat';
 import enterpriseRouter from './src/server/routes/enterprise';
+import saasRouter from './src/server/routes/saas';
+import kpiRouter from './src/server/routes/kpis';
 
 async function startServer() {
   await databaseReady;
@@ -37,6 +44,7 @@ async function startServer() {
 
   // ── Middleware ─────────────────────────────────────────────────────────────
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' }));
+  app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -57,10 +65,11 @@ async function startServer() {
         return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: 'Bu origin için erişim izni yok.' } });
       }
       res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Vary', 'Origin');
     }
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Bootstrap-Token');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Bootstrap-Token, X-Organization-Id, X-Client-Type, X-IYZ-SIGNATURE-V3');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
@@ -77,6 +86,8 @@ async function startServer() {
     logger.info('HTTP request', { method: req.method, path: req.path });
     next();
   });
+  app.use(metricsMiddleware);
+  app.get('/internal/metrics', renderMetrics);
 
   // ── Public routes ──────────────────────────────────────────────────────────
   app.get('/api/health', async (_req, res) => {
@@ -106,9 +117,13 @@ async function startServer() {
   });
   app.get('/api/config', (_req, res) => res.json({
     registrationEnabled: process.env.NODE_ENV === 'test' || process.env.ALLOW_PUBLIC_REGISTRATION === 'true',
-    aiEnabled: getAiConfiguration().configured && process.env.ALLOW_EXTERNAL_AI_DATA === 'true'
+    aiEnabled: getAiConfiguration().configured && process.env.ALLOW_EXTERNAL_AI_DATA === 'true',
+    emailVerificationRequired: process.env.REQUIRE_EMAIL_VERIFICATION === 'true',
+    emailDeliveryConfigured: isEmailConfigured(),
+    billing: getIyzicoBillingConfiguration()
   }));
   app.use('/api', authRouter);                          // /api/register, /api/login
+  app.use('/api/saas', saasRouter);                    // organizations, members, usage and billing
 
   // ── Protected routes ───────────────────────────────────────────────────────
   app.use('/api',           authenticateJWT, datasetRouter);   // /api/upload, /api/dataset/*
@@ -118,6 +133,7 @@ async function startServer() {
   app.use('/reports',       authenticateJWT, reportsRouter);   // /reports/export, /reports/download
   app.use('/api/chat',      authenticateJWT, chatRouter);
   app.use('/api/enterprise', authenticateJWT, enterpriseRouter);
+  app.use('/api/kpis',      authenticateJWT, kpiRouter);
 
   app.use(['/api', '/reports'], (_req, res) => {
     res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint bulunamadı.' } });
@@ -136,25 +152,42 @@ async function startServer() {
   // ── Error handler ──────────────────────────────────────────────────────────
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     logger.error('Sunucu hatası.', { error: err, path: req.path, code: err.code });
-    const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
+    let status = Number.isInteger(err.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
     let message = 'Sunucu tarafında beklenmeyen bir hata oluştu.';
     if (err.status === 429 || err.message?.includes('Quota exceeded') || err.message?.includes('429'))
       message = 'AI servis kotası doldu. Lütfen kısa süre sonra tekrar deneyin.';
     else if (err.message?.includes('API key not valid'))
       message = 'Geçersiz AI servis anahtarı.';
+    else if (err.code === 'BILLING_NOT_CONFIGURED') {
+      status = 503;
+      message = 'Ödeme sağlayıcısı henüz yapılandırılmadı.';
+    } else if (typeof err.message === 'string' && err.code && String(err.code).startsWith('BILLING_')) {
+      message = err.message;
+    }
     res.status(status).json({ error: { code: err.code || 'INTERNAL_SERVER_ERROR', message } });
   });
 
   if (process.env.NODE_ENV !== 'test') {
-    const httpServer = app.listen(PORT, '0.0.0.0', () => logger.info('HTTP sunucusu hazır.', { port: PORT, environment: process.env.NODE_ENV || 'development' }));
+    const httpServer = app.listen(PORT, '0.0.0.0', () => {
+      logger.info('HTTP sunucusu hazır.', { port: PORT, environment: process.env.NODE_ENV || 'development' });
+      startConnectorScheduler();
+      startRetentionScheduler();
+    });
     let shuttingDown = false;
     const shutdown = (signal: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
       logger.info('Sunucu kontrollü olarak kapatılıyor.', { signal });
+      const schedulerStopped = stopConnectorScheduler().catch((error) => {
+        logger.error('Konnektör zamanlayıcısı durdurulurken hata oluştu.', { error });
+      });
+      const retentionStopped = stopRetentionScheduler().catch((error) => {
+        logger.error('Veri saklama zamanlayıcısı durdurulurken hata oluştu.', { error });
+      });
       const forcedExit = setTimeout(() => process.exit(1), 15_000);
       forcedExit.unref();
-      httpServer.close(() => {
+      httpServer.close(async () => {
+        await Promise.allSettled([schedulerStopped, retentionStopped]);
         closeDatabase()
           .then(() => process.exit(0))
           .catch((error) => {

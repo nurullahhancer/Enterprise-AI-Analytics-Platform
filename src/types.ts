@@ -1,4 +1,14 @@
-export type ViewState = 'dashboard' | 'import' | 'chat' | 'settings' | 'enterprise';
+export type ViewState = 'dashboard' | 'decisions' | 'import' | 'chat' | 'settings' | 'enterprise' | 'team' | 'billing';
+
+export interface OrganizationMembership {
+  organization_id: string;
+  organization_name: string;
+  organization_slug: string;
+  plan_key: 'starter' | 'professional' | 'enterprise';
+  email: string;
+  role: 'admin' | 'analyst' | 'viewer';
+  status: 'active' | 'suspended';
+}
 
 export interface User {
   id: string;
