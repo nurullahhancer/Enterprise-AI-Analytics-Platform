@@ -1,89 +1,131 @@
-# Enterprise AI Analytics Platform
+# 🚀 Enterprise AI Analytics Platform
 
-Enterprise AI Analytics Platform; kurumların CSV, JSON ve izinli REST kaynaklarından gelen verilerini güvenli biçimde tek analiz kapsamında topladığı, dashboard ve doğrulanabilir rapor ürettiği, gerçek ML analizi çalıştırdığı ve sonuçları isteğe bağlı yapay zekâ ile yorumlayabildiği çok kiracılı bir SaaS uygulamasıdır.
+[![Node.js](https://img.shields.io/badge/Node.js-v22.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![React](https://img.shields.io/badge/React-v19.x-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-v5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-v0.110+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-v17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#)
 
-Production için kanonik uygulama proje kökündeki React/Vite arayüzü ile Express/PostgreSQL API'sidir. SQLite mevcut kurulumlar için yalnız geçiş kaynağı ve geliştirme alternatifi olarak desteklenir. `frontend/` altındaki Next.js arayüzü ve `backend/` altındaki .NET çözümü önceki mimari çalışmasının referans/test bileşenleridir; ana `docker-compose.yml` bunları production trafiğine çıkarmaz.
+> **Enterprise AI Analytics Platform**, kurumların karmaşık veri kaynaklarını (CSV, JSON, REST API) güvenli biçimde tek analiz kapsamında topladığı; otomatik ETL, gerçek Makine Öğrenimi (ML) tahminlemesi, anomali tespiti ve üretken yapay zekâ (LLM) yorumlaması sunduğu **çok kiracılı (Multi-Tenant) B2B SaaS** platformudur.
 
-## Production mimarisi
+---
+
+## 📌 İçindekiler
+- [Genel Mimari](#-genel-mimari)
+- [Öne Çıkan Özellikler](#-öne-çıkan-özellikler)
+- [Teknoloji Yığını](#-teknoloji-yığını)
+- [Kurulum & Hızlı Başlangıç](#-kurulum--hızlı-başlangıç)
+- [Yetkilendirme ve Rol Yönetimi (RBAC)](#-yetkilendirme-ve-rol-yönetimi-rbac)
+- [Ortam Değişkenleri (.env)](#-ortam-değişkenleri-env)
+- [Test ve Doğrulama](#-test-ve-doğrulama)
+- [Güvenlik ve Mimari İlkeleri](#-güvenlik-ve-mimari-ilkeleri)
+
+---
+
+## 🏗️ Genel Mimari
+
+Uygulama, yüksek güvenlik standartlarına uygun olarak mikroservis benzeri bir konteyner mimarisi ile çalışır. Dış dünya yalnızca Nginx SSL/TLS ters proxy üzerinden iletişim kurar; ML servisi dış ağa kapalıdır.
 
 ```text
-Tarayıcı -- HTTPS :443 --> Nginx
-                              |
-                              | yalnızca 127.0.0.1:3000
-                              v
-                    React SPA + Express API  ---->  PostgreSQL + zorunlu RLS
-                              |
-                              | yalnızca internal Docker ağı
-                              v
-                          FastAPI ML servisi
+  [ Tarayıcı / Mobil ]
+           │ (HTTPS / SSL - Port 443)
+           ▼
+     ┌──────────┐
+     │  Nginx   │  (SSL Termination & Reverse Proxy)
+     └────┬─────┘
+          │ (Internal loopback: 127.0.0.1:3000)
+          ▼
+  ┌───────────────────────────────────────────────────────────┐
+  │  Node.js (Express API) + React SPA (Vite)                │
+  │  - Session Management & Scrypt JWT Authentication        │
+  │  - Row Level Security (RLS) & Multi-Tenant Routing       │
+  └───────────────┬───────────────────────────┬───────────────┘
+                  │                           │
+  (Internal Docker Net)                       │ (DB Connection)
+                  ▼                           ▼
+       ┌──────────────────┐        ┌──────────────────┐
+       │ FastAPI Service  │        │  PostgreSQL 17   │
+       │ (Scikit-learn/   │        │  (Forced RLS     │
+       │  Pandas ML)      │        │   Isolation)     │
+       └──────────────────┘        └──────────────────┘
 ```
 
-- Web/API: Node.js 22, Express, React 19, Vite, TypeScript
-- Kalıcı veri: PostgreSQL 17 ve Docker named volume (`postgres-data`)
-- ML: FastAPI, pandas, NumPy ve scikit-learn; dışarıya port yayınlanmaz
-- Kimlik doğrulama: web için HttpOnly/Secure/SameSite oturum çerezi, mobil/API için 8 saatlik HS256 JWT, scrypt parola özeti ve token sürümleme
-- Yetkilendirme: organizasyon üyeliğine bağlı `admin`, `analyst`, `viewer` rolleri; açık tenant filtresi ve PostgreSQL forced RLS
-- İsteğe bağlı AI: Google Gemini; müşteri verisi ancak açık izin değişkeni de etkinse gönderilir
-- İsteğe bağlı veri kaynağı: yalnızca allowlist ile sınırlandırılmış HTTPS/JSON REST konnektörü
-- Mobil kabuk: Capacitor/Android; yalnız güvenilen HTTPS API ile ayrı build gerekir
+---
 
-## Temel özellikler
+## 🌟 Öne Çıkan Özellikler
 
-- Çalışma alanı oluşturan kayıt, giriş, davetle üyelik, e-posta doğrulama, tek kullanımlık parola yenileme ve hesap silme
-- Organizasyon seçici, üye/davet/rol yönetimi ve organizasyon bazında veri izolasyonu
-- Başlangıç/Profesyonel/Kurumsal plan limitleri, kalıcı aylık AI/ML sayaçları ve iyzico hosted subscription checkout
-- CSV ve JSON yükleme, izinli REST kaynaklarından güncel anlık görüntü alma ve her veri setini analiz kapsamına ayrı ayrı dahil etme/çıkarma
-- Analiz odağıyla uyumlu şemaları büyük/küçük harf duyarsız kolon eşleştirmesi ve `kaynak_dosya` lineage alanıyla birleştirme; farklı şemaları silmeden ayrı analiz gruplarında saklama
-- Median doldurma, tip normalizasyonu ve IQR aykırı değer adımlarını içeren gerçek CSV ETL akışı
-- ETL çıktısını analiz kapsamına alırken kaynak veri setlerini otomatik çıkararak orijinal+türetilmiş veri çift sayımını önleme
-- Analiz Stüdyosu'nda hedef kolon ve 1–12 dönem ufuk seçimi; kronolojik holdout ile MAE/RMSE/R²/SMAPE, gelecek tahminleri, alt/üst aralıklar, anomaliler, segmentler ve veri kalitesi uyarıları
-- Başarılı analizleri organizasyon bazında kalıcı saklama; doğrulanmış yapısal sonuçlardan AI yorumu ve aynı koşu için yeniden üretilebilir CSV raporu
-- Veri destekli sohbette ham satır yerine sunucu tarafından hesaplanan profil, metrik ve son doğrulanmış analizleri kullanma
-- CSV rapor dışa aktarma ve formül enjeksiyonu koruması
-- PDF/TXT doküman ayrıştırma, pozitif eşleşmeli yerel parça araması ve kaynak/parça atıfları
-- Şifreli REST konnektör yapılandırması ve SSRF korumalı veri alma
-- REST ingest sırasında aynı bağlantının eski kopyalarını çoğaltmak yerine güncel anlık görüntüsünü yenileme
-- Kullanıcıya ait audit kayıtları ve bildirimler
-- Sağlık kontrolü, yapılandırılmış loglar ve Docker restart/log rotation ayarları
+### 📊 1. Gelişmiş ML Analitik & Tahmin Motoru
+* **Zaman Serisi Tahminleme (Forecasting)**: Chronological holdout ile `MAE`, `RMSE`, `R²` ve `SMAPE` metriklerini hesaplayan doğrulanabilir `LinearRegression` tahmin modelleri.
+* **Anomali Tespiti**: `IsolationForest` algoritması ile şüpheli veya aykırı veri satırlarının otomatik tespiti.
+* **Müşteri & Veri Segmentasyonu**: `K-Means Clustering` ile veri noktalarının otomatik gruplanması.
+* **Otomatik Sınıflandırma**: `Logistic Regression` ile ikili sınıflandırma (F1-score, Precision, Recall, ROC-AUC).
 
-## Dizinler
+### 🛡️ 2. Kurumsal Güvenlik & Çoklu Kiracılık (Multi-Tenancy)
+* **PostgreSQL Forced RLS**: Veritabanı seviyesinde kiracı izolasyonu. Kullanıcıların verisi kesinlikle diğer organizasyonlarla karışmaz.
+* **Granüler Yetkilendirme (RBAC)**: `Admin`, `Analyst` ve `Viewer` rolleri ile dinamik arayüz ve API erişim kısıtlaması.
+* **Audit & Denetim Günlüğü**: Kullanıcıların tüm kritik işlemleri (giriş, veri yükleme, analiz, rol değişimi) değiştirilemez log kayıtları olarak saklanır.
 
-| Yol | Amaç | Production durumu |
-|---|---|---|
-| `src/`, `server.ts` | Kanonik React/Express uygulaması | Etkin |
-| `ml-service/` | İç ağdaki FastAPI analiz servisi | Etkin |
-| `docker-compose.yml` | Kanonik production ve test profilleri | Etkin |
-| `android/` | Capacitor Android kabuğu | İsteğe bağlı |
-| `frontend/` | Statik Next.js referans arayüzü | Production dışı |
-| `backend/` | .NET 8 referans API/temiz mimari çözümü | Production dışı |
-| `infra/` | Eski/geniş referans servis topolojisi | Production dışı |
-| `docs/` | Mimari karar kayıtları | Referans |
+### 💳 3. B2B SaaS ve Faturalandırma Altyapısı
+* **iyzico Abonelik Entegrasyonu**: Başlangıç, Profesyonel ve Kurumsal paketler için iyzico hosted checkout altyapısı.
+* **Kota ve Limit Yönetimi**: Aylık AI/ML kullanım sayaçları, veri boyutu ve üye kısıtlamaları.
 
-## Hızlı kurulum
+### 🔄 4. Veri İşleme (ETL) ve Konnektörler
+* **CSV / JSON İçe Aktarım**: Büyük dosyalar için gelişmiş yükleme ve tip algılama.
+* **REST API Konnektörü**: Şifrelenmiş (AES-256-GCM) ve SSRF korumalı dış REST kaynaklarından anlık görüntü senkronizasyonu.
+* **ETL Pipeline**: Medyan doldurma, IQR aykırı değer temizleme, otomatik şema eşleştirme ve `kaynak_dosya` izleme (lineage).
 
-Gereksinimler: Linux VDS, güncel Docker Engine ve Docker Compose v2.
+### 🤖 5. Üretken Yapay Zeka (LLM) & RAG Doküman Havuzu
+* **AI İş Yorumları**: Gerçekleştirilen ML analiz çıktılarının NVIDIA / Gemini modelleri ile doğal dile dönüştürülmesi.
+* **PDF & TXT Doküman RAG Havuzu**: PDF ve TXT belgelerinden metin çıkarımı ve belgeler üzerinden bağlamsal AI sohbeti.
 
+---
+
+## 🛠️ Teknoloji Yığını
+
+| Katman | Teknolojiler |
+|---|---|
+| **Frontend** | React 19, Vite, TypeScript, TailwindCSS, Lucide Icons |
+| **Backend API** | Node.js 22, Express.js, TypeScript, Scrypt, JWT |
+| **Veritabanı** | PostgreSQL 17 (Forced RLS), SQLite (Dev/Migration) |
+| **ML Engine** | Python 3.11+, FastAPI, Scikit-learn, Pandas, NumPy |
+| **Ters Proxy & Sunucu** | Nginx, Docker Engine, Docker Compose v2 |
+| **Mobil Kabuk** | Capacitor (Android) |
+
+---
+
+## 🚀 Kurulum & Hızlı Başlangıç
+
+### Gereksinimler
+- Linux VDS / Sunucu (Ubuntu 22.04 LTS önerilir)
+- Docker Engine & Docker Compose v2
+
+### 1. Depoyu Klonlayın ve Ortam Dosyasını Hazırlayın
 ```bash
-cd /root/Enterprise-AI-Analytics-Platform
+git clone https://github.com/nurullahhancer/Enterprise-AI-Analytics-Platform.git
+cd Enterprise-AI-Analytics-Platform
 cp .env.example .env
 chmod 600 .env
 ```
 
-`.env` içinde en az aşağıdaki değerleri güvenli ve benzersiz değerlerle doldurun:
+### 2. .env Dosyasını Yapılandırın
+`.env` içerisindeki kritik anahtarları güncelleyin:
+```env
+JWT_SECRET=en_az_32_karakterlik_tahmin_edilemez_gizli_anahtar
+DATA_ENCRYPTION_KEY=32_baytlik_base64_veya_64_karakter_hex_aes_anahtari
+BOOTSTRAP_ADMIN_EMAIL=admin@kurumunuz.com
+BOOTSTRAP_ADMIN_TOKEN=en_az_32_karakterlik_bootstrap_secret
+APP_URL=https://sunucu-ip-veya-domain.com
+```
 
-- `JWT_SECRET`: en az 32 karakterlik tahmin edilemez anahtar
-- `DATA_ENCRYPTION_KEY`: 32 bayt base64 veya 64 karakter hex AES anahtarı
-- `BOOTSTRAP_ADMIN_EMAIL`: ilk yönetici olacak e-posta
-- `BOOTSTRAP_ADMIN_TOKEN`: ilk yönetici kaydını ayrıca yetkilendiren en az 32 karakterlik tek kullanımlık secret
-- `APP_URL`: kullanıcının tarayıcıda açacağı tam adres
-- `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`, `DATABASE_URL`: ayrı yönetim ve `NOBYPASSRLS` uygulama rolleri
-
-Gerçek anahtarları Git'e eklemeyin ve terminal/rapor çıktısına yazdırmayın.
-
-İlk yönetici hesabı arayüzden oluşturulmaz; bootstrap e-postası için API ayrıca `X-Bootstrap-Token` ister. `ALLOW_PUBLIC_REGISTRATION=true` ile servisi başlatın ve isteği yalnız container içinden, localhost'tan veya geçerli HTTPS üzerinden gönderin. Aşağıdaki yöntem token'ı komut satırına ya da çıktıya koymaz; parola gizli olarak okunup container stdin'ine aktarılır:
-
+### 3. Konteynerleri Başlatın
 ```bash
 docker compose up -d --build
+```
+
+### 4. İlk Yönetici Hesabını Oluşturun
+```bash
 read -rsp 'İlk admin parolası: ' INITIAL_ADMIN_PASSWORD
 printf '\n'
 printf '%s' "$INITIAL_ADMIN_PASSWORD" | docker compose exec -T app node -e '
@@ -101,94 +143,66 @@ process.stdin.on("end", async () => {
   process.exit(response.ok ? 0 : 1);
 });'
 unset INITIAL_ADMIN_PASSWORD
-# Başarılı kayıttan sonra .env içinde ALLOW_PUBLIC_REGISTRATION=false yapın
-# ve BOOTSTRAP_ADMIN_TOKEN değerini kaldırın; ardından environment'ı yenileyin.
-docker compose up -d
 ```
 
-Bu VDS'deki erişim adresi `https://45.133.36.77`, sağlık kontrolü ise `https://45.133.36.77/api/health` adresidir. `http://45.133.36.77` kalıcı olarak HTTPS'e yönlenir; host portu `3000` yalnızca `127.0.0.1` üzerinde Nginx tarafından erişilebilir. Başka sunucuya kurulumda `APP_URL`, IP sertifikası ve `deploy/nginx/` altındaki yapılandırmalar o sunucunun IP/domain değerine uyarlanmalıdır.
+---
 
-> `JWT_SECRET` eksik veya geçersizse uygulama veritabanını ve sağlık endpoint'ini çalıştırır fakat giriş güvenli biçimde devre dışı kalır; `/api/health` HTTP 503 ve `degraded` döner, app container'ı hazır/healthy sayılmaz.
+## 👥 Yetkilendirme ve Rol Yönetimi (RBAC)
 
-Kurulum, Nginx, yedekleme, rollback ve operasyon komutlarının tamamı için [DEPLOYMENT.md](DEPLOYMENT.md) dosyasına bakın.
-
-## Roller
-
-| İşlem | Admin | Analyst | Viewer |
+| İşlem / Yetki | Admin | Analyst | Viewer |
 |---|:---:|:---:|:---:|
-| Dashboard/veri/rapor görüntüleme | Evet | Evet | Evet |
-| CSV ve doküman yükleme | Evet | Evet | Hayır |
-| ETL dönüşümü çalıştırma | Evet | Evet | Hayır |
-| Mevcut veri üzerinde ML analizi | Evet | Evet | Evet |
-| REST konnektörü oluşturma/silme | Evet | Hayır | Hayır |
-| REST konnektöründen ingest | Evet | Evet | Hayır |
-| Doküman silme ve rol yönetimi | Evet | Hayır | Hayır |
+| Dashboard, Grafik ve Rapor Görüntüleme | ✅ | ✅ | ✅ |
+| CSV, JSON ve Doküman Yükleme | ✅ | ✅ | ❌ |
+| ETL İş Akışı Çalıştırma | ✅ | ✅ | ❌ |
+| ML Analizi ve Tahmin Çalıştırma | ✅ | ✅ | ✅ |
+| REST API Konnektörü Ekleme / Silme | ✅ | ❌ | ❌ |
+| REST Konnektöründen İnceleme (Ingest) | ✅ | ✅ | ❌ |
+| Kullanıcı Rolü Değiştirme & Doküman Silme | ✅ | ❌ | ❌ |
 
-Kullanıcı rolü JWT içinden kabul edilmez; her istekte seçili organizasyonun güncel üyeliği kontrol edilir. Her organizasyonun son yöneticisi düşürülemez veya çıkarılamaz.
+---
 
-## Environment özeti
+## ⚙️ Ortam Değişkenleri (.env)
 
-Eksiksiz ve secretsiz şablon `.env.example` dosyasındadır.
+Eksiksiz yapılandırma seçenekleri `.env.example` dosyasında yer almaktadır.
 
 | Değişken | Açıklama |
 |---|---|
-| `APP_BIND_IP`, `APP_PORT`, `APP_URL` | Dış dinleme ve tarayıcı adresi |
-| `ALLOWED_ORIGINS` | Virgülle ayrılmış ek CORS origin'leri |
-| `TRUST_PROXY_HOPS` | Güvenilen reverse proxy atlama sayısı |
-| `JWT_SECRET`, `JWT_ISSUER`, `JWT_AUDIENCE` | JWT güvenlik ayarları |
-| `DATABASE_URL`, `POSTGRES_*` | PostgreSQL uygulama/yönetim rolleri ve bağlantı ayarları |
-| `RESEND_API_KEY`, `EMAIL_FROM`, `REQUIRE_EMAIL_VERIFICATION` | İşlem e-postaları ve doğrulama zorunluluğu |
-| `IYZICO_*` | Hosted abonelik, plan referansları ve V3 webhook doğrulaması |
-| `ALLOW_PUBLIC_REGISTRATION` | Herkese açık kayıt anahtarı |
-| `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_TOKEN` | İlk yönetici e-posta eşleşmesi ve ayrı kayıt yetkisi |
-| `DATA_ENCRYPTION_KEY` | Konnektör ayarları için AES-256-GCM anahtarı |
-| `REST_CONNECTOR_ALLOWED_HOSTS` | İzinli tam REST hostname listesi |
-| `SQL_CONNECTOR_ALLOWED_HOSTS` | Salt-okunur PostgreSQL konektörleri için izinli tam hostname listesi |
-| `GEMINI_API_KEY`, `ALLOW_EXTERNAL_AI_DATA` | İsteğe bağlı dış AI ve açık veri aktarım izni |
-| `DATASET_SCHEMA_MIN_OVERLAP` | Aynı analiz grubuna alınacak kaynaklar için gereken asgari normalize kolon örtüşmesi |
-| `ANALYSIS_RUN_MAX_PER_ORG`, `ANALYSIS_RUN_MAX_RESULT_CHARS` | Kalıcı analiz geçmişi adet ve sonuç boyutu sınırları |
-| `MAX_*`, `JSON_BODY_LIMIT` | Veri/doküman/request üst sınırları |
+| `APP_URL` | Uygulamanın dış dünyaya açık HTTPS adresi |
+| `JWT_SECRET` | 32+ karakterlik JWT imzalama anahtarı |
+| `DATABASE_URL` | PostgreSQL bağlantı adresi (`NOBYPASSRLS` erişim rolü ile) |
+| `DATA_ENCRYPTION_KEY` | Konnektör şifrelemeleri için AES-256 key |
+| `ML_SERVICE_URL` | İç Docker ağındaki FastAPI servis adresi (`http://ml-service:8000`) |
+| `IYZICO_*` | iyzico abonelik checkout ve V3 webhook anahtarları |
+| `NVIDIA_API_KEY` / `GEMINI_API_KEY` | İsteğe bağlı LLM yapay zeka entegrasyonu anahtarı |
 
-## Doğrulama
+---
 
-Kanonik uygulama:
+## 🧪 Test ve Doğrulama
+
+Birim ve entegrasyon testlerini çalıştırmak için:
 
 ```bash
-npm ci
-npm run lint
+# Lokal ortam doğrulaması
 npm test
-npm run build
-npm audit
-```
 
-Tüm container tabanlı test hedefleri:
-
-```bash
-docker compose --profile test build app-test ml-test backend-test reference-frontend-test
+# Docker konteyner test suitleri
+docker compose --profile test build app-test ml-test
 docker compose --profile test run --rm app-test
 docker compose --profile test run --rm ml-test
-docker compose --profile test run --rm backend-test
-docker compose --profile test run --rm reference-frontend-test
 ```
 
-Production sağlık ve log kontrolü:
+---
 
-```bash
-docker compose ps
-curl -fsS http://127.0.0.1:3000/api/health
-docker compose logs --tail=200 app ml-service
-```
+## 🔒 Güvenlik ve Mimari İlkeleri
 
-Denetim sırasında çalıştırılan testlerin ve kalan sınırların ayrıntısı [SYSTEM_AUDIT.md](SYSTEM_AUDIT.md) dosyasındadır.
+- **Fail-Closed Authentication**: `JWT_SECRET` eksik veya geçersiz olduğunda kimlik doğrulama servisi güvenli biçimde kapalı kalır.
+- **SSRF Koruması**: REST konnektörlerinde iç ağ IP'lerine (127.0.0.1, 10.x.x.x vb.) erişim yasaktır, yalnızca allowlist adreslerine izin verilir.
+- **Formül Enjeksiyon Koruması**: Dışa aktarılan CSV raporlarında `=`, `+`, `-`, `@` ile başlayan hücre değerleri otomatik olarak temizlenir.
+- **Scrypt Password Hashing**: Kullanıcı parolaları yüksek maliyetli `scrypt` algoritması ile özetlenir.
 
-## Bilinen kapsam sınırları
+---
 
-- Bu dağıtım tek VDS üzerinde PostgreSQL kullanır; çok düğümlü yatay ölçekleme için ortak job/rate-limit katmanı ve yönetilen veritabanı gerekir.
-- Analiz kapsamı uyumlu şemaların satır bazında birleşimini destekler; farklı tablolar arasında anahtar bazlı join veya kullanıcı tanımlı SQL henüz yoktur.
-- PostgreSQL konnektörü exact-host allowlist, ayrı salt-okunur kullanıcı, SELECT/WITH doğrulaması, read-only transaction, timeout ve satır/kolon limitleriyle desteklenir.
-- RAG, sözcüksel yerel metin parçası seçimi kullanır; embedding/vector tabanlı semantik arama production akışında yoktur.
-- İşlem e-postası ve gerçek ödeme ancak ilgili Resend/iyzico hesap anahtarları sağlandığında etkinleşir; sandbox anahtarları repoda tutulmaz.
-- Domain/DNS ve TLS sertifikası sunucu dışından sağlanmalıdır.
-- İş kuyruğu ve saatlik AI hız sınırı process içidir; birden çok uygulama replikası veya restart dayanımı için Redis benzeri ortak katman gerekir.
-- ML güven skoru kronolojik holdout hata ve veri derinliğinden türetilen bir doğrulama göstergesidir; kalibre olasılık ya da karar garantisi değildir. Kritik kullanımda kuruma özgü backtest ve model risk doğrulaması gerekir.
-- Android cleartext trafiği kapalıdır. Mobil production build için `VITE_API_BASE_URL=https://...`, CORS'ta `https://localhost`, `npm run cap:sync`, cihaz E2E ve release signing gerekir; cihaz/store teslimi bu denetimin dışındadır.
+## 📄 Lisans & Telif Hakkı
+
+Bu proje kurumsal kullanım ve SaaS lisanslamasına uygun olarak geliştirilmiştir.  
+© 2026 **Enterprise AI Analytics Platform**. Tüm hakları saklıdır.
