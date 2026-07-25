@@ -21,20 +21,6 @@ import numpy as np
 import pandas as pd
 from fastapi import Body, FastAPI, Header, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field, model_validator
-from sklearn.cluster import KMeans
-from sklearn.ensemble import IsolationForest
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    mean_absolute_error,
-    mean_squared_error,
-    precision_score,
-    r2_score,
-    recall_score,
-    roc_auc_score,
-)
-from sklearn.model_selection import train_test_split
 
 try:
     import mlflow
@@ -194,9 +180,29 @@ class PredictRequest(BaseModel):
 
 class PredictResponse(BaseModel):
     forecast: list[dict[str, Any]]
-    mae: float
-    rmse: float
+    mae: float | None = None
+    rmse: float | None = None
     cached: bool = False
+    model: str | None = None
+    smape: float | None = None
+    wape: float | None = None
+    mase: float | None = None
+    mase_scale_lag: int | None = None
+    mae_vs_naive_ratio: float | None = None
+    r2: float | None = None
+    validation_method: str | None = None
+    reference_baseline_model: str | None = None
+    quality_score: float | None = None
+    quality_grade: str | None = None
+    decision_support: str | None = None
+    interval_test_coverage: float | None = None
+    forecast_frequency: str | None = None
+    frequency_detection_method: str | None = None
+    regime_shift_score: float | None = None
+    engine_version: str | None = None
+    confidence_semantics: str | None = None
+    confidence_is_probability: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AnalyzeRequest(BaseModel):
@@ -315,91 +321,69 @@ def predict(
     request: PredictRequest,
     x_tenant_id: Annotated[str, Header(max_length=MAX_TENANT_ID_LENGTH)] = "anonymous",
 ) -> PredictResponse:
+    """Forecast with honest validation semantics and period-aware caching."""
+    from app.forecasting_v7 import predict_history_v7
+
     tenant_id = x_tenant_id or "anonymous"
-    history_hash = _hash_data([p.model_dump() for p in request.history])
-
-    # --- Cache lookup ---
-    cached_entry = _cache.get(tenant_id, history_hash, "predict")
+    history_payload = [point.model_dump() for point in request.history]
+    history_hash = _hash_data({"history": history_payload, "periods": request.periods, "engine": "v7.1"})
+    cached_entry = _cache.get(tenant_id, history_hash, "predict_v7_1")
     if cached_entry is not None:
-        model: LinearRegression = cached_entry.model
-        frame: pd.DataFrame = cached_entry.extra["frame"]
-        mae: float = cached_entry.metrics["mae"]
-        rmse: float = cached_entry.metrics["rmse"]
-        cache_hit = True
-    else:
-        frame = pd.DataFrame([p.model_dump() for p in request.history])
-        frame["date"] = pd.to_datetime(frame["date"])
-        frame = frame.sort_values("date").reset_index(drop=True)
-        frame["t"] = np.arange(len(frame))
+        cached_result = dict(cached_entry.extra["result"])
+        cached_result["cached"] = True
+        return PredictResponse(**cached_result)
 
-        model = LinearRegression()
-        x_feat = frame[["t"]]
-        y = frame["value"]
-        model.fit(x_feat, y)
-        fitted = model.predict(x_feat)
+    try:
+        result = predict_history_v7(history_payload, request.periods)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
-        mae = round(float(mean_absolute_error(y, fitted)), 4)
-        rmse = round(float(mean_squared_error(y, fitted) ** 0.5), 4)
-
-        _cache.put(
-            tenant_id,
-            history_hash,
-            "predict",
-            model=model,
-            metrics={"mae": mae, "rmse": rmse},
-            extra={"frame": frame},
+    _cache.put(
+        tenant_id,
+        history_hash,
+        "predict_v7_1",
+        model=None,
+        metrics={
+            key: float(value)
+            for key, value in {"mae": result.get("mae"), "rmse": result.get("rmse")}.items()
+            if value is not None
+        },
+        extra={"result": result},
+    )
+    response = PredictResponse(**result, cached=False)
+    experiment_metrics = {
+        key: float(value)
+        for key, value in {
+            "mae": result.get("mae"),
+            "rmse": result.get("rmse"),
+            "smape": result.get("smape"),
+            "r2": result.get("r2"),
+        }.items()
+        if value is not None
+    }
+    if experiment_metrics:
+        log_experiment(
+            "sales-forecast-robust-v7.1",
+            {"periods": request.periods, "rows": len(history_payload), "cache_hit": False},
+            experiment_metrics,
+            tenant_id=tenant_id,
         )
-        cache_hit = False
-
-    future_t = pd.DataFrame({"t": np.arange(len(frame), len(frame) + request.periods)})
-    future_values = model.predict(future_t)
-    last_date = frame["date"].max()
-
-    min_bound, max_bound = determine_domain_bounds(frame["value"])
-    forecast = []
-    for i, value in enumerate(future_values):
-        val = float(value)
-        if min_bound is not None:
-            val = max(min_bound, val)
-        if max_bound is not None:
-            val = min(max_bound, val)
-        forecast.append({
-            "date": (last_date + pd.DateOffset(months=i + 1)).date().isoformat(),
-            "value": round(val, 2),
-        })
-
-    response = PredictResponse(
-        forecast=forecast,
-        mae=mae,
-        rmse=rmse,
-        cached=cache_hit,
-    )
-    log_experiment(
-        "sales-forecast-linear-regression",
-        {"periods": request.periods, "rows": len(frame), "cache_hit": cache_hit},
-        {"mae": response.mae, "rmse": response.rmse},
-        tenant_id=tenant_id,
-    )
     return response
-
 
 @app.post("/anomalies")
 def anomalies(
     values: BoundedNumericValues,
     x_tenant_id: Annotated[str, Header(max_length=MAX_TENANT_ID_LENGTH)] = "anonymous",
 ) -> dict[str, Any]:
-    tenant_id = x_tenant_id or "anonymous"
-    data_hash = _hash_data(values)
+    from app.analytics_v7 import anomaly_indices_v7
 
-    cached_entry = _cache.get(tenant_id, data_hash, "anomaly")
+    tenant_id = x_tenant_id or "anonymous"
+    data_hash = _hash_data({"values": values, "engine": "v7.1"})
+    cached_entry = _cache.get(tenant_id, data_hash, "anomaly_v7_1")
     if cached_entry is not None:
         return {**cached_entry.extra, "cached": True}
-
-    model = IsolationForest(contamination="auto", random_state=42)
-    labels = model.fit_predict(np.array(values).reshape(-1, 1))
-    result = {"anomalies": [index for index, label in enumerate(labels) if label == -1]}
-
-    _cache.put(tenant_id, data_hash, "anomaly", model=model, metrics={}, extra=result)
+    result = anomaly_indices_v7(values)
+    _cache.put(tenant_id, data_hash, "anomaly_v7_1", model=None, metrics={}, extra=result)
     return {**result, "cached": False}
 
 
@@ -409,22 +393,15 @@ def clusters(
     k: Annotated[int, Query(ge=1, le=100)] = 2,
     x_tenant_id: Annotated[str, Header(max_length=MAX_TENANT_ID_LENGTH)] = "anonymous",
 ) -> dict[str, Any]:
-    tenant_id = x_tenant_id or "anonymous"
-    data_hash = _hash_data((values, k))
+    from app.analytics_v7 import cluster_values_v7
 
-    cached_entry = _cache.get(tenant_id, data_hash, "cluster")
+    tenant_id = x_tenant_id or "anonymous"
+    data_hash = _hash_data({"values": values, "k": k, "engine": "v7.1"})
+    cached_entry = _cache.get(tenant_id, data_hash, "cluster_v7_1")
     if cached_entry is not None:
         return {**cached_entry.extra, "cached": True}
-
-    bounded_k = max(1, min(k, len(values)))
-    model = KMeans(n_clusters=bounded_k, random_state=42, n_init="auto")
-    labels = model.fit_predict(np.array(values).reshape(-1, 1))
-    result = {
-        "clusters": labels.tolist(),
-        "centers": [round(float(center[0]), 4) for center in model.cluster_centers_],
-    }
-
-    _cache.put(tenant_id, data_hash, "cluster", model=model, metrics={}, extra=result)
+    result = cluster_values_v7(values, k)
+    _cache.put(tenant_id, data_hash, "cluster_v7_1", model=None, metrics={}, extra=result)
     return {**result, "cached": False}
 
 
@@ -588,35 +565,14 @@ def is_date_column(column: str, series: pd.Series) -> bool:
     return pd.to_datetime(series, errors="coerce", dayfirst=True, format="mixed").notna().mean() >= 0.7
 
 
-def select_target_column(frame: pd.DataFrame, numeric_columns: list[str], requested: str | None) -> str | None:
-    if requested in numeric_columns:
-        return requested
-    if not numeric_columns:
-        logger.warning("No numeric target candidate found")
-        return None
+def select_target_column(
+    frame: pd.DataFrame,
+    numeric_columns: list[str],
+    requested: str | None,
+) -> str | None:
+    from app.forecasting_v7 import select_target_column_v7
 
-    scored: list[tuple[float, str]] = []
-    for column in numeric_columns:
-        values = pd.to_numeric(frame[column], errors="coerce")
-        non_null = int(values.notna().sum())
-        non_zero = int((values.fillna(0) != 0).sum())
-        variance = float(values.var(skipna=True) or 0)
-        name = normalize_column_name(column)
-        total_value_hint = 6 if re.search(r"ciro|gelir|revenue|sales|satis|amount|tutar|toplam|total|net|brut", name) else 0
-        unit_price_hint = 2 if re.search(r"fiyat|price", name) else 0
-        weak_hint = -2 if re.search(r"birim|unit|adet|quantity|qty|miktar|count|sayi|number", name) else 0
-        id_penalty = -5 if re.search(r"(^id$| id$|_id|kod|code|telefon|phone|email|mail)", name) else 0
-        date_penalty = -5 if re.search(r"date|tarih|zaman|time", name) else 0
-        coverage = non_null / len(frame) if len(frame) else 0
-        score = total_value_hint + unit_price_hint + weak_hint + id_penalty + date_penalty + coverage + (1 if non_zero else -3) + (1 if variance > 0 else -2)
-        scored.append((score, column))
-
-    scored.sort(reverse=True)
-    logger.info(
-        "Target candidates scored",
-        extra={"candidate_count": len(scored), "best_score": round(scored[0][0], 4)},
-    )
-    return scored[0][1]
+    return select_target_column_v7(frame, numeric_columns, requested)
 
 
 def _target_aggregation(target_column: str) -> tuple[str, str | None]:
@@ -637,166 +593,6 @@ def _target_aggregation(target_column: str) -> tuple[str, str | None]:
     return "mean", "Target semantics were unclear; duplicate dates were aggregated with the mean."
 
 
-def _smape(actual: np.ndarray, predicted: np.ndarray) -> float:
-    denominator = np.abs(actual) + np.abs(predicted)
-    terms = np.divide(
-        2.0 * np.abs(actual - predicted),
-        denominator,
-        out=np.zeros_like(actual, dtype=float),
-        where=denominator > 1e-12,
-    )
-    return float(np.mean(terms) * 100.0)
-
-
-MODEL_TIE_BREAK_PRIORITY = {
-    "naive_last_value": 0,
-    "moving_average_3": 1,
-    "seasonal_naive": 2,
-    "linear_trend": 3,
-}
-
-
-def _linear_trend_predictions(
-    train_time: np.ndarray,
-    train_values: np.ndarray,
-    prediction_time: np.ndarray,
-) -> np.ndarray:
-    model = LinearRegression()
-    model.fit(train_time.reshape(-1, 1), train_values)
-    return model.predict(prediction_time.reshape(-1, 1))
-
-
-def _recursive_moving_average(values: np.ndarray, periods: int, window: int = 3) -> np.ndarray:
-    history = [float(value) for value in values]
-    predictions: list[float] = []
-    bounded_window = max(1, min(window, len(history)))
-    for _ in range(periods):
-        prediction = float(np.mean(history[-bounded_window:]))
-        predictions.append(prediction)
-        history.append(prediction)
-    return np.asarray(predictions, dtype=float)
-
-
-def _recursive_seasonal_naive(values: np.ndarray, periods: int, lag: int) -> np.ndarray:
-    history = [float(value) for value in values]
-    predictions: list[float] = []
-    for _ in range(periods):
-        prediction = history[-lag]
-        predictions.append(prediction)
-        history.append(prediction)
-    return np.asarray(predictions, dtype=float)
-
-
-def _infer_training_seasonality(train_dates: pd.Series) -> tuple[int, str] | None:
-    """Infer a conservative seasonal lag from regular training dates only."""
-    date_index = pd.DatetimeIndex(train_dates)
-    if len(date_index) < 2:
-        return None
-
-    differences = np.diff(date_index.asi8) / 86_400_000_000_000
-    differences = differences[differences > 0]
-    if len(differences) == 0:
-        return None
-
-    median_days = float(np.median(differences))
-    tolerance_days = max(1.0, median_days * 0.15)
-    regularity = float(np.mean(np.abs(differences - median_days) <= tolerance_days))
-    if regularity < 0.80:
-        return None
-
-    seasonal_spec: tuple[int, str] | None = None
-    if 0.75 <= median_days <= 1.5:
-        seasonal_spec = (7, "weekly cycle in daily data")
-    elif 5.5 <= median_days <= 8.5:
-        seasonal_spec = (52, "annual cycle in weekly data")
-    elif 25 <= median_days <= 35:
-        seasonal_spec = (12, "annual cycle in monthly data")
-    elif 75 <= median_days <= 105:
-        seasonal_spec = (4, "annual cycle in quarterly data")
-
-    if seasonal_spec is None:
-        return None
-
-    lag, label = seasonal_spec
-    if len(date_index) < lag * 2:
-        return None
-    return lag, label
-
-
-def _score_forecast_candidate(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float | None]:
-    mae = float(mean_absolute_error(actual, predicted))
-    rmse = float(mean_squared_error(actual, predicted) ** 0.5)
-    smape = _smape(actual, predicted)
-    r2: float | None = None
-    if np.ptp(actual) > max(1e-12, abs(float(np.mean(actual))) * 1e-12):
-        r2 = float(r2_score(actual, predicted))
-    return {"mae": mae, "rmse": rmse, "r2": r2, "smape": smape}
-
-
-def _future_dates(dates: pd.Series, periods: int) -> tuple[list[pd.Timestamp], float, str]:
-    date_index = pd.DatetimeIndex(dates)
-    inferred_frequency: str | None = None
-    if len(date_index) >= 3:
-        try:
-            inferred_frequency = pd.infer_freq(date_index)
-        except ValueError:
-            inferred_frequency = None
-
-    if inferred_frequency:
-        generated = pd.date_range(start=date_index[-1], periods=periods + 1, freq=inferred_frequency)[1:]
-        cadence_days = float(np.median(np.diff(date_index.asi8) / 86_400_000_000_000))
-        return list(generated), max(cadence_days, 1.0), inferred_frequency
-
-    positive_differences = np.diff(date_index.asi8) / 86_400_000_000_000
-    positive_differences = positive_differences[positive_differences > 0]
-    cadence_days = float(np.median(positive_differences)) if len(positive_differences) else 1.0
-    generated = [date_index[-1] + pd.Timedelta(days=cadence_days * step) for step in range(1, periods + 1)]
-    return generated, max(cadence_days, 1.0), "median_observed_interval"
-
-
-def determine_domain_bounds(
-    values: np.ndarray | pd.Series | list[float],
-    column_name: str | None = None,
-) -> tuple[float | None, float | None]:
-    """Dynamically determine lower and upper domain bounds for forecasting intervals and predictions.
-
-    If historical values contain any negative numbers, or if column name indicates
-    metrics that can naturally be negative (profit, loss, margin, delta, growth, etc.),
-    no lower bound constraint is enforced.
-
-    Otherwise (e.g. sales, quantity, stock, revenue, count, or all non-negative historical values),
-    lower bound is capped at 0.0.
-    """
-    clean_values = np.asarray(values, dtype=float)
-    clean_values = clean_values[~np.isnan(clean_values)]
-
-    col_lower = (column_name or "").lower()
-
-    # 1. Rule: If historical values contain negative numbers, allow negative lower bounds
-    if len(clean_values) > 0 and np.any(clean_values < 0):
-        return None, None
-
-    # 2. Rule: Check column name for domain keywords that can naturally be negative
-    unbounded_keywords = [
-        "kar", "profit", "loss", "zarar", "net", "delta", "change",
-        "growth", "bakiye", "balance", "margin", "diff", "fark", "temp", "sicaklik"
-    ]
-    if any(kw in col_lower for kw in unbounded_keywords):
-        return None, None
-
-    # 3. Rule: Non-negative history or strictly positive metric keywords (sales, quantity, stock, count, etc.)
-    strictly_positive_keywords = [
-        "satis", "sales", "adet", "quantity", "stok", "stock",
-        "ciro", "revenue", "count", "ziyaret", "visitor", "price", "fiyat"
-    ]
-    if len(clean_values) > 0 and np.all(clean_values >= 0):
-        return 0.0, None
-
-    if any(kw in col_lower for kw in strictly_positive_keywords):
-        return 0.0, None
-
-    return None, None
-
 
 def build_regression_forecast(
     frame: pd.DataFrame,
@@ -804,515 +600,34 @@ def build_regression_forecast(
     date_columns: list[str],
     periods: int,
 ) -> tuple[ModelEnvelope | None, list[str]]:
-    warnings: list[str] = []
-    if target_column is None:
-        warning = "Forecast was skipped because no numeric target column was available."
-        logger.warning(warning)
-        return None, [warning]
+    from app.forecasting_v7 import build_regression_forecast_v7
 
-    target_values = pd.to_numeric(frame[target_column], errors="coerce")
-    target_missing_rows = int(target_values.isna().sum())
-    if target_missing_rows:
-        warnings.append(f"{target_missing_rows} rows with missing or invalid target values were excluded.")
-
-    date_column: str | None = None
-    invalid_date_rows = 0
-    aggregation = "row_order"
-    forecast_frequency = "row_step"
-    future_dates: list[pd.Timestamp] = []
-
-    if date_columns:
-        parsed_candidates = [
-            (
-                column,
-                pd.to_datetime(frame[column], errors="coerce", dayfirst=True, format="mixed"),
-            )
-            for column in date_columns
-        ]
-        date_column, parsed_dates = max(
-            parsed_candidates,
-            key=lambda item: int(item[1].notna().sum()),
-        )
-        invalid_date_rows = int(frame[date_column].notna().sum() - parsed_dates.notna().sum())
-        if invalid_date_rows:
-            warnings.append(f"{invalid_date_rows} rows with invalid dates were excluded.")
-
-        work = pd.DataFrame({"date": parsed_dates.dt.floor("D"), "target": target_values}).dropna()
-        aggregation, aggregation_warning = _target_aggregation(target_column)
-        if aggregation_warning:
-            warnings.append(aggregation_warning)
-        if aggregation == "sum":
-            series = work.groupby("date", as_index=False, sort=True)["target"].sum()
-        else:
-            series = work.groupby("date", as_index=False, sort=True)["target"].mean()
-        series = series.sort_values("date").reset_index(drop=True)
-        if len(series) >= 1:
-            elapsed_days = (series["date"] - series["date"].iloc[0]).dt.total_seconds() / 86_400
-            series["t"] = elapsed_days.astype(float)
-            future_dates, _cadence_days, forecast_frequency = _future_dates(series["date"], periods)
-            future_t = np.array(
-                [
-                    (date - series["date"].iloc[0]).total_seconds() / 86_400
-                    for date in future_dates
-                ],
-                dtype=float,
-            )
-        else:
-            future_t = np.array([], dtype=float)
-    else:
-        warnings.append("No usable date column was found; the forecast uses input row order as an explicit fallback.")
-        series = pd.DataFrame({"target": target_values}).dropna().reset_index(drop=True)
-        series["t"] = np.arange(len(series), dtype=float)
-        future_t = np.arange(len(series), len(series) + periods, dtype=float)
-
-    observation_count = len(series)
-    if observation_count < 3:
-        warning = "Forecast was skipped because fewer than 3 valid chronological observations remained."
-        warnings.append(warning)
-        logger.warning(warning)
-        return None, warnings
-
-    values = series["target"].to_numpy(dtype=float)
-    time_values = series["t"].to_numpy(dtype=float)
-    is_constant = bool(np.ptp(values) <= max(1e-12, abs(float(np.mean(values))) * 1e-12))
-    if is_constant:
-        warnings.append("The target is constant; predictive confidence is set to 0 because trend skill cannot be validated.")
-
-    requested_test_rows = max(2, int(np.ceil(observation_count * 0.20)))
-    has_holdout = observation_count - requested_test_rows >= 3
-    train_rows = observation_count - requested_test_rows if has_holdout else observation_count
-    test_rows = requested_test_rows if has_holdout else 0
-    validation_method = "chronological_last_20_percent" if has_holdout else "insufficient_data_no_holdout"
-
-    mae: float | None = None
-    rmse: float | None = None
-    r2: float | None = None
-    smape: float | None = None
-    confidence = 0.0
-    interval_base: float | None = None
-    interval_method: str | None = None
-    candidate_metrics: list[dict[str, Any]] = []
-    selected_model = "linear_trend"
-    selected_model_label = "Linear trend"
-    selected_parameters: dict[str, int] = {}
-
-    if has_holdout:
-        train_time = time_values[:train_rows]
-        train_values = values[:train_rows]
-        holdout_time = time_values[train_rows:]
-        holdout_actual = values[train_rows:]
-
-        candidates: list[dict[str, Any]] = [
-            {
-                "model": "linear_trend",
-                "label": "Linear trend",
-                "parameters": {},
-                "predictions": _linear_trend_predictions(train_time, train_values, holdout_time),
-            },
-            {
-                "model": "naive_last_value",
-                "label": "Naive last value",
-                "parameters": {},
-                "predictions": np.full(test_rows, train_values[-1], dtype=float),
-            },
-            {
-                "model": "moving_average_3",
-                "label": "3-point moving average",
-                "parameters": {"window": 3},
-                "predictions": _recursive_moving_average(train_values, test_rows, window=3),
-            },
-        ]
-
-        seasonal_spec = None
-        if date_column:
-            seasonal_spec = _infer_training_seasonality(series["date"].iloc[:train_rows])
-        if seasonal_spec is not None:
-            seasonal_lag, seasonal_label = seasonal_spec
-            candidates.append(
-                {
-                    "model": "seasonal_naive",
-                    "label": f"Seasonal naive (lag {seasonal_lag})",
-                    "parameters": {"lag": seasonal_lag},
-                    "seasonality": seasonal_label,
-                    "predictions": _recursive_seasonal_naive(
-                        train_values,
-                        test_rows,
-                        seasonal_lag,
-                    ),
-                }
-            )
-
-        scored_candidates: list[dict[str, Any]] = []
-        for candidate in candidates:
-            candidate_scores = _score_forecast_candidate(
-                holdout_actual,
-                candidate["predictions"],
-            )
-            scored_candidates.append({**candidate, **candidate_scores})
-
-        winner = min(
-            scored_candidates,
-            key=lambda candidate: (
-                candidate["mae"],
-                MODEL_TIE_BREAK_PRIORITY[candidate["model"]],
-                candidate["model"],
-            ),
-        )
-        selected_model = winner["model"]
-        selected_model_label = winner["label"]
-        selected_parameters = winner["parameters"]
-        holdout_prediction = winner["predictions"]
-        mae = winner["mae"]
-        rmse = winner["rmse"]
-        r2 = winner["r2"]
-        smape = winner["smape"]
-
-        ranked_candidates = sorted(
-            scored_candidates,
-            key=lambda candidate: (
-                candidate["mae"],
-                MODEL_TIE_BREAK_PRIORITY[candidate["model"]],
-                candidate["model"],
-            ),
-        )
-        for rank, candidate in enumerate(ranked_candidates, start=1):
-            candidate_metrics.append(
-                {
-                    "model": candidate["model"],
-                    "label": candidate["label"],
-                    "parameters": candidate["parameters"],
-                    "mae": round(candidate["mae"], 4),
-                    "rmse": round(candidate["rmse"], 4),
-                    "r2": round(candidate["r2"], 4) if candidate["r2"] is not None else None,
-                    "smape": round(candidate["smape"], 4),
-                    "rank": rank,
-                    "selected": candidate["model"] == selected_model,
-                }
-            )
-
-        if r2 is None:
-            warnings.append("Holdout target values are constant, so out-of-sample R² is undefined.")
-
-        scale = max(float(np.mean(np.abs(holdout_actual))), float(np.std(values[:train_rows])), 1e-9)
-        mae_score = max(0.0, 1.0 - min(1.0, mae / scale))
-        rmse_score = max(0.0, 1.0 - min(1.0, rmse / scale))
-        smape_score = max(0.0, 1.0 - min(1.0, smape / 100.0))
-        error_score = 0.30 * mae_score + 0.40 * rmse_score + 0.30 * smape_score
-        depth_factor = min(1.0, train_rows / 20.0)
-        confidence = min(0.95, error_score * (0.45 + 0.55 * depth_factor))
-        absolute_residuals = np.abs(holdout_actual - holdout_prediction)
-        interval_base = float(np.quantile(absolute_residuals, 0.95, method="higher"))
-        interval_method = "empirical_holdout_absolute_error_95pct_with_horizon_scaling"
-    else:
-        warnings.append(
-            "At least 5 valid chronological observations are required for a 3-row train / 2-row holdout split; confidence is set to 0."
-        )
-
-    if is_constant:
-        confidence = 0.0
-
-    # Row-order fallback has no guaranteed temporal meaning: the holdout split
-    # only validates extrapolation along whatever order the caller happened to
-    # submit rows in, not a real chronological trend. Confidence is halved so
-    # it cannot be mistaken for a genuine time-based forecast.
-    if date_column is None:
-        confidence = round(confidence * 0.5, 4)
-        warnings.append(
-            "No date column was available, so the forecast trend is based on input row order, "
-            "not real chronological time; confidence has been reduced accordingly."
-        )
-
-    if selected_model == "naive_last_value":
-        predicted = np.full(periods, values[-1], dtype=float)
-    elif selected_model == "moving_average_3":
-        predicted = _recursive_moving_average(values, periods, window=3)
-    elif selected_model == "seasonal_naive":
-        predicted = _recursive_seasonal_naive(
-            values,
-            periods,
-            selected_parameters["lag"],
-        )
-    else:
-        predicted = _linear_trend_predictions(time_values, values, future_t)
-
-    non_negative_history = bool(np.all(values >= -1e-9))
-
-    forecast_data: list[dict[str, Any]] = []
-    for index, value in enumerate(predicted):
-        point: dict[str, Any] = {
-            "row": f"T+{index + 1}",
-            "predicted": round(float(value), 4),
-        }
-        if future_dates:
-            point["date"] = future_dates[index].date().isoformat()
-        if interval_base is not None:
-            width = interval_base * np.sqrt(1.0 + (index + 1) / max(train_rows, 1))
-            lower = value - width
-            upper = value + width
-            if non_negative_history and value >= 0:
-                lower = max(0.0, lower)
-            point["lower"] = round(float(lower), 4)
-            point["upper"] = round(float(upper), 4)
-        forecast_data.append(point)
-
-    metrics: dict[str, Any] = {
-        "mae": round(mae, 4) if mae is not None else None,
-        "rmse": round(rmse, 4) if rmse is not None else None,
-        "r2": round(r2, 4) if r2 is not None else None,
-        "smape": round(smape, 4) if smape is not None else None,
-        "train_rows": train_rows,
-        "test_rows": test_rows,
-        "validation_method": validation_method,
-        "validation": {
-            "method": validation_method,
-            "strategy": "all candidates fit on training rows only; holdout used only for scoring",
-            "holdout_fraction": 0.20 if has_holdout else 0.0,
-            "train_rows": train_rows,
-            "test_rows": test_rows,
-        },
-        "selection_metric": "mae",
-        "selected_model": selected_model,
-        "selected_model_parameters": selected_parameters,
-        "candidate_metrics": candidate_metrics,
-        "date_column": date_column,
-        "aggregation": aggregation,
-        "forecast_frequency": forecast_frequency,
-        "interval_method": interval_method,
-        "interval_residual_count": test_rows if interval_method else 0,
-        "target_missing_rows": target_missing_rows,
-        "invalid_date_rows": invalid_date_rows,
-        "data_warnings": warnings,
-    }
-    time_basis = f"daily {aggregation} aggregation on {date_column}" if date_column else "explicit row-order fallback"
-    if has_holdout:
-        model_label = (
-            f"{selected_model_label} selected by lowest holdout MAE from "
-            f"{len(candidate_metrics)} training-only candidates "
-            f"({time_basis}; chronological holdout validation)"
-        )
-    else:
-        model_label = (
-            f"sklearn LinearRegression time trend ({time_basis}; "
-            "insufficient data for chronological holdout model selection)"
-        )
-
-    logger.info(
-        "Forecast validation completed",
-        extra={
-            "observation_count": observation_count,
-            "train_rows": train_rows,
-            "test_rows": test_rows,
-            "validation_method": validation_method,
-            "selected_model": selected_model,
-            "candidate_count": len(candidate_metrics),
-            "confidence": round(confidence, 4),
-        },
+    return build_regression_forecast_v7(
+        frame=frame,
+        target_column=target_column,
+        date_columns=date_columns,
+        periods=periods,
+        envelope_factory=ModelEnvelope,
+        target_aggregation=_target_aggregation,
     )
-    return ModelEnvelope(
-        type="forecast",
-        confidence=round(confidence, 4),
-        model=model_label,
-        metrics=metrics,
-        data=forecast_data,
-    ), warnings
 
 
 def build_anomaly_detection(frame: pd.DataFrame, numeric_columns: list[str]) -> ModelEnvelope | None:
-    if len(numeric_columns) == 0 or len(frame) < 4:
-        return None
+    from app.analytics_v7 import build_anomaly_detection_v7
 
-    numeric_frame = frame[numeric_columns].apply(pd.to_numeric, errors="coerce")
-    all_missing_columns = [column for column in numeric_frame.columns if numeric_frame[column].isna().all()]
-    if all_missing_columns:
-        logger.warning(
-            "Anomaly feature columns are fully missing and will fall back to 0",
-            extra={"column_count": len(all_missing_columns)},
-        )
-    numeric_frame = numeric_frame.fillna(numeric_frame.median(numeric_only=True)).fillna(0)
-    model = IsolationForest(contamination="auto", random_state=42)
-    labels = model.fit_predict(numeric_frame)
-    scores = -model.score_samples(numeric_frame)
-    data = [
-        {"row": int(index), "score": round(float(scores[index]), 4)}
-        for index, label in enumerate(labels)
-        if label == -1
-    ]
-    return ModelEnvelope(
-        type="anomaly",
-        confidence=0.82 if data else 0.55,
-        model="sklearn IsolationForest",
-        metrics={"anomaly_count": float(len(data))},
-        data=data,
-    )
-
-
-CLASSIFICATION_USE_CASES = (
-    ("churn_risk", "Müşteri kaybı riski", re.compile(r"churn|kayip|terk|iptal|lost customer")),
-    ("fraud_risk", "Dolandırıcılık riski", re.compile(r"fraud|dolandir|sahte|supheli|risk flag")),
-    ("employee_turnover", "Personel devir riski", re.compile(r"turnover|attrition|isten ayril|personel kayip")),
-)
-
-
-def _binary_target(series: pd.Series) -> pd.Series:
-    positive = {"1", "true", "yes", "evet", "e", "y", "churn", "lost", "fraud", "ayrildi", "terk"}
-    negative = {"0", "false", "no", "hayir", "h", "n", "active", "retained", "normal", "devam"}
-
-    def convert(value: Any) -> float:
-        if pd.isna(value):
-            return np.nan
-        if isinstance(value, (int, float, np.integer, np.floating)) and float(value) in (0.0, 1.0):
-            return float(value)
-        normalized = normalize_column_name(str(value))
-        if normalized in positive:
-            return 1.0
-        if normalized in negative:
-            return 0.0
-        return np.nan
-
-    return series.map(convert).astype(float)
+    return build_anomaly_detection_v7(frame, numeric_columns, ModelEnvelope)
 
 
 def build_classification_use_cases(frame: pd.DataFrame) -> tuple[list[ModelEnvelope], list[str]]:
-    results: list[ModelEnvelope] = []
-    warnings: list[str] = []
-    hinted_columns = {
-        column
-        for column in frame.columns
-        if any(pattern.search(normalize_column_name(column)) for _, _, pattern in CLASSIFICATION_USE_CASES)
-    }
+    from app.analytics_v7 import build_classification_use_cases_v7
 
-    for use_case, label, pattern in CLASSIFICATION_USE_CASES:
-        target_column = next(
-            (column for column in frame.columns if pattern.search(normalize_column_name(column))),
-            None,
-        )
-        if target_column is None:
-            continue
-        target = _binary_target(frame[target_column])
-        valid = target.notna()
-        class_counts = target[valid].value_counts()
-        if int(valid.sum()) < 20 or len(class_counts) != 2 or int(class_counts.min()) < 5:
-            warnings.append(
-                f"{label} modeli için '{target_column}' bulundu ancak en az 20 etiketli satır ve her sınıfta 5 örnek gerekir."
-            )
-            continue
-
-        feature_data: dict[str, pd.Series] = {}
-        for column in frame.columns:
-            if column in hinted_columns or is_identifier_column(column, frame[column]) or is_date_column(column, frame[column]):
-                continue
-            source = frame.loc[valid, column]
-            numeric = pd.to_numeric(source, errors="coerce")
-            if numeric.notna().mean() >= 0.7:
-                feature_data[column] = numeric.fillna(numeric.median()).fillna(0)
-                continue
-            unique_count = int(source.dropna().astype(str).nunique())
-            if 1 < unique_count <= 50:
-                feature_data[column] = source.fillna("Bilinmiyor").astype(str)
-            if len(feature_data) >= 30:
-                break
-
-        if not feature_data:
-            warnings.append(f"{label} modeli için kullanılabilir açıklayıcı kolon bulunamadı.")
-            continue
-
-        features = pd.DataFrame(feature_data, index=frame.index[valid])
-        encoded = pd.get_dummies(features, dummy_na=False, dtype=float)
-        encoded = encoded.replace([np.inf, -np.inf], np.nan).fillna(0)
-        encoded = encoded.loc[:, encoded.nunique(dropna=False) > 1]
-        if encoded.shape[1] == 0:
-            warnings.append(f"{label} modeli için değişken özellik bulunamadı.")
-            continue
-
-        y = target.loc[encoded.index].astype(int)
-        x_train, x_test, y_train, y_test = train_test_split(
-            encoded,
-            y,
-            test_size=0.25,
-            random_state=42,
-            stratify=y,
-        )
-        validation_model = LogisticRegression(max_iter=1_000, class_weight="balanced", random_state=42)
-        validation_model.fit(x_train, y_train)
-        predicted = validation_model.predict(x_test)
-        probabilities = validation_model.predict_proba(x_test)[:, 1]
-        roc_auc = float(roc_auc_score(y_test, probabilities)) if y_test.nunique() == 2 else 0.0
-
-        model = LogisticRegression(max_iter=1_000, class_weight="balanced", random_state=42)
-        model.fit(encoded, y)
-        all_probabilities = model.predict_proba(encoded)[:, 1]
-        ranked = sorted(
-            (
-                {"row": int(index), "risk_score": round(float(score), 4)}
-                for index, score in zip(encoded.index.tolist(), all_probabilities, strict=True)
-            ),
-            key=lambda item: item["risk_score"],
-            reverse=True,
-        )[:10]
-        drivers = sorted(
-            (
-                {"feature": str(feature), "coefficient": round(float(coefficient), 4)}
-                for feature, coefficient in zip(encoded.columns, model.coef_[0], strict=True)
-            ),
-            key=lambda item: abs(item["coefficient"]),
-            reverse=True,
-        )[:8]
-        metrics: dict[str, Any] = {
-            "use_case": use_case,
-            "label": label,
-            "target_column": target_column,
-            "train_rows": int(len(x_train)),
-            "test_rows": int(len(x_test)),
-            "positive_rows": int((y == 1).sum()),
-            "accuracy": round(float(accuracy_score(y_test, predicted)), 4),
-            "precision": round(float(precision_score(y_test, predicted, zero_division=0)), 4),
-            "recall": round(float(recall_score(y_test, predicted, zero_division=0)), 4),
-            "f1": round(float(f1_score(y_test, predicted, zero_division=0)), 4),
-            "roc_auc": round(roc_auc, 4),
-            "validation_method": "stratified_25_percent_holdout",
-            "drivers": drivers,
-        }
-        results.append(ModelEnvelope(
-            type="classification",
-            confidence=round(roc_auc, 4),
-            model="Açıklanabilir LogisticRegression + stratified holdout",
-            metrics=metrics,
-            data=ranked,
-        ))
-
-    return results, warnings
+    return build_classification_use_cases_v7(frame, ModelEnvelope)
 
 
 def build_segments(frame: pd.DataFrame, numeric_columns: list[str]) -> ModelEnvelope | None:
-    if len(numeric_columns) == 0 or len(frame) < 4:
-        return None
+    from app.analytics_v7 import build_segments_v7
 
-    numeric_frame = frame[numeric_columns].apply(pd.to_numeric, errors="coerce")
-    all_missing_columns = [column for column in numeric_frame.columns if numeric_frame[column].isna().all()]
-    if all_missing_columns:
-        logger.warning(
-            "Segment feature columns are fully missing and will fall back to 0",
-            extra={"column_count": len(all_missing_columns)},
-        )
-    numeric_frame = numeric_frame.fillna(numeric_frame.median(numeric_only=True)).fillna(0)
-    k = max(2, min(4, len(frame) // 2))
-    model = KMeans(n_clusters=k, random_state=42, n_init="auto")
-    labels = model.fit_predict(numeric_frame)
-    data = []
-    for segment in sorted(set(labels.tolist())):
-        segment_frame = numeric_frame[labels == segment]
-        data.append({
-            "segment": int(segment),
-            "count": int(len(segment_frame)),
-            "averages": {column: round(float(segment_frame[column].mean()), 4) for column in numeric_columns[:5]},
-        })
-    return ModelEnvelope(
-        type="segment",
-        confidence=0.78 if len(data) >= 2 else 0.0,
-        model="sklearn KMeans",
-        metrics={"segments": float(len(data))},
-        data=data,
-    )
+    return build_segments_v7(frame, numeric_columns, ModelEnvelope)
 
 
 def log_experiment(

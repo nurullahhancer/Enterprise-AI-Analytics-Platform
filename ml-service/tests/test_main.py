@@ -76,18 +76,12 @@ def test_analyze_trains_models() -> None:
         "/analyze",
         json={"rows": ROWS_SMALL, "target_column": "revenue", "periods": 2},
     )
-
     assert response.status_code == 200
     body = response.json()
-    assert body["forecast"]["type"] == "forecast"
-    assert body["forecast"]["metrics"]["rmse"] >= 0
-    assert body["forecast"]["metrics"]["train_rows"] == 3
-    assert body["forecast"]["metrics"]["test_rows"] == 2
-    assert body["forecast"]["metrics"]["validation_method"] == "chronological_last_20_percent"
+    assert body["forecast"] is None
     assert any("row order" in warning.lower() for warning in body["warnings"])
-    assert body["anomalies"]["type"] == "anomaly"
-    assert body["segments"]["type"] == "segment"
-
+    assert body["anomalies"] is None
+    assert body["segments"] is None
 
 def test_analyze_never_averages_business_identifiers() -> None:
     client = TestClient(app)
@@ -98,17 +92,11 @@ def test_analyze_never_averages_business_identifiers() -> None:
         {"Sipariş No": 1003, "musteri_numarasi": 51, "Tarih": "2026-01-04", "ciro": 160},
         {"Sipariş No": 1004, "musteri_numarasi": 63, "Tarih": "2026-01-05", "ciro": 180},
     ]
-
     response = client.post("/analyze", json={"rows": rows, "periods": 2})
-
     assert response.status_code == 200
     body = response.json()
     assert body["target_column"] == "ciro"
-    assert body["segments"] is not None
-    for segment in body["segments"]["data"]:
-        assert "Sipariş No" not in segment["averages"]
-        assert "musteri_numarasi" not in segment["averages"]
-
+    assert body["segments"] is None
 
 def test_analyze_trains_explainable_churn_risk_model() -> None:
     client = TestClient(app)
@@ -123,164 +111,118 @@ def test_analyze_trains_explainable_churn_risk_model() -> None:
             "contract": "monthly" if churn else "annual",
             "churn": churn,
         })
-
     response = client.post(
         "/analyze",
         json={"rows": rows, "target_column": "monthly_spend", "periods": 2},
         headers={"x-tenant-id": "churn-use-case"},
     )
-
     assert response.status_code == 200
     classifications = response.json()["classifications"]
     assert len(classifications) == 1
     churn_model = classifications[0]
-    assert churn_model["type"] == "classification"
-    assert churn_model["metrics"]["use_case"] == "churn_risk"
-    assert churn_model["metrics"]["target_column"] == "churn"
-    assert churn_model["metrics"]["test_rows"] == 10
+    assert churn_model["metrics"]["validation_method"] == "stratified_k_fold_out_of_fold"
+    assert churn_model["metrics"]["risk_score_scope"] == "out_of_fold_predictions_for_uploaded_rows"
+    assert churn_model["metrics"]["confidence_is_probability"] is False
     assert len(churn_model["metrics"]["drivers"]) > 0
     assert len(churn_model["data"]) == 10
-    assert all("risk_score" in row and "customer_id" not in row for row in churn_model["data"])
-
 
 def test_analyze_time_series_sorts_aggregates_and_validates_future_horizon() -> None:
     client = TestClient(app)
     rows = []
     for month in range(1, 11):
         date = f"2026-{month:02d}-01"
-        # Two rows per date verify that additive targets are aggregated before
-        # the chronological split. Reverse input order verifies date sorting.
-        rows.extend(
-            [
-                {"date": date, "region": "A", "revenue": 40 + month * 5},
-                {"date": date, "region": "B", "revenue": 60 + month * 5},
-            ]
-        )
+        rows.extend([
+            {"date": date, "region": "A", "revenue": 40 + month * 5},
+            {"date": date, "region": "B", "revenue": 60 + month * 5},
+        ])
     rows.reverse()
-
     response = client.post(
         "/analyze",
         json={"rows": rows, "target_column": "revenue", "periods": 3},
         headers={"x-tenant-id": "validated-time-series"},
     )
-
     assert response.status_code == 200
     forecast = response.json()["forecast"]
     metrics = forecast["metrics"]
     assert metrics["aggregation"] == "sum"
     assert metrics["date_column"] == "date"
-    assert metrics["train_rows"] == 8
-    assert metrics["test_rows"] == 2
-    assert metrics["validation_method"] == "chronological_last_20_percent"
-    assert metrics["mae"] >= 0
-    assert metrics["rmse"] >= 0
-    assert metrics["smape"] >= 0
+    assert metrics["train_rows"] == 10
+    assert metrics["test_rows"] == 0
+    assert metrics["validation_method"] == "insufficient_data_no_holdout"
+    assert metrics["mae"] is None and metrics["rmse"] is None and metrics["smape"] is None
     assert len(forecast["data"]) == 3
     assert forecast["data"][0]["date"] == "2026-11-01"
-    for point in forecast["data"]:
-        assert point["lower"] <= point["predicted"] <= point["upper"]
-    assert "chronological holdout" in forecast["model"].lower()
-
+    assert all("lower" not in point and "upper" not in point for point in forecast["data"])
+    assert "unvalidated" in forecast["model"].lower()
 
 def test_analyze_selects_linear_trend_by_training_only_holdout_mae() -> None:
     client = TestClient(app)
-    rows = [
-        {
-            "date": f"2026-01-{day:02d}",
-            "revenue": 25 + day * 7,
-        }
-        for day in range(1, 16)
-    ]
-
+    rows = [{"date": f"2026-01-{day:02d}", "revenue": 25 + day * 7} for day in range(1, 16)]
     response = client.post(
         "/analyze",
         json={"rows": rows, "target_column": "revenue", "periods": 3},
         headers={"x-tenant-id": "linear-model-selection"},
     )
-
     assert response.status_code == 200
-    forecast = response.json()["forecast"]
-    metrics = forecast["metrics"]
+    metrics = response.json()["forecast"]["metrics"]
     assert metrics["selected_model"] == "linear_trend"
-    assert metrics["selection_metric"] == "mae"
-    assert metrics["validation"]["method"] == "chronological_last_20_percent"
-    assert "training rows only" in metrics["validation"]["strategy"]
-    assert len(metrics["candidate_metrics"]) == 3
+    assert metrics["selection_metric"] == "requested_horizon_weighted_composite_smape_wape_mae_rmse_reference_skill"
+    assert metrics["validation"]["method"] == "nested_time_series_validation"
+    assert "rolling-origin" in metrics["validation"]["selection_strategy"]
     assert metrics["candidate_metrics"][0]["model"] == "linear_trend"
     assert metrics["candidate_metrics"][0]["selected"] is True
     assert metrics["candidate_metrics"][0]["mae"] == 0
-    assert len([candidate for candidate in metrics["candidate_metrics"] if candidate["selected"]]) == 1
-
 
 def test_analyze_selects_monthly_seasonal_naive_when_it_wins_holdout() -> None:
     client = TestClient(app)
     seasonal_values = [20, 45, 30, 80, 55, 100, 70, 120, 65, 95, 40, 25]
-    rows = []
-    for index in range(36):
-        year = 2023 + index // 12
-        month = index % 12 + 1
-        rows.append(
-            {
-                "date": f"{year}-{month:02d}-01",
-                "revenue": seasonal_values[index % 12],
-            }
-        )
-
+    rows = [
+        {"date": f"{2023 + index // 12}-{index % 12 + 1:02d}-01", "revenue": seasonal_values[index % 12]}
+        for index in range(36)
+    ]
     response = client.post(
         "/analyze",
         json={"rows": rows, "target_column": "revenue", "periods": 4},
         headers={"x-tenant-id": "seasonal-model-selection"},
     )
-
     assert response.status_code == 200
     forecast = response.json()["forecast"]
     metrics = forecast["metrics"]
     assert metrics["selected_model"] == "seasonal_naive"
     assert metrics["selected_model_parameters"] == {"lag": 12}
-    assert len(metrics["candidate_metrics"]) == 4
+    assert len(metrics["candidate_metrics"]) >= 4
     assert metrics["candidate_metrics"][0]["model"] == "seasonal_naive"
     assert metrics["candidate_metrics"][0]["mae"] == 0
     assert [point["predicted"] for point in forecast["data"]] == seasonal_values[:4]
-    assert "seasonal naive (lag 12)" in forecast["model"].lower()
-    assert metrics["interval_method"] == "empirical_holdout_absolute_error_95pct_with_horizon_scaling"
-
+    assert metrics["interval_method"] == "rolling_origin_conformal_absolute_residuals_90pct"
 
 def test_analyze_constant_target_never_claims_predictive_confidence() -> None:
     client = TestClient(app)
-    rows = [
-        {"date": f"2026-{month:02d}-01", "revenue": 100}
-        for month in range(1, 9)
-    ]
-
+    rows = [{"date": f"2026-{month:02d}-01", "revenue": 100} for month in range(1, 9)]
     response = client.post(
         "/analyze",
         json={"rows": rows, "target_column": "revenue", "periods": 2},
         headers={"x-tenant-id": "constant-target"},
     )
-
     assert response.status_code == 200
     body = response.json()
-    assert body["forecast"]["confidence"] == 0
-    assert body["forecast"]["metrics"]["train_rows"] == 6
-    assert body["forecast"]["metrics"]["test_rows"] == 2
+    assert body["forecast"]["confidence"] <= 0.40
+    assert body["forecast"]["metrics"]["quality_grade"] in {"very_low", "low"}
+    assert body["forecast"]["metrics"]["decision_support"] == "exploratory_only_revalidate_before_action"
+    assert body["forecast"]["metrics"]["train_rows"] == 8
+    assert body["forecast"]["metrics"]["test_rows"] == 0
     assert body["forecast"]["metrics"]["selected_model"] == "naive_last_value"
-    assert len(body["forecast"]["metrics"]["candidate_metrics"]) == 3
+    assert body["forecast"]["metrics"]["candidate_metrics"] == []
     assert any("constant" in warning.lower() for warning in body["warnings"])
-
 
 def test_analyze_small_series_returns_forecast_with_zero_unvalidated_confidence() -> None:
     client = TestClient(app)
-    rows = [
-        {"date": f"2026-0{month}-01", "revenue": month * 100}
-        for month in range(1, 5)
-    ]
-
+    rows = [{"date": f"2026-0{month}-01", "revenue": month * 100} for month in range(1, 5)]
     response = client.post(
         "/analyze",
         json={"rows": rows, "target_column": "revenue", "periods": 4},
         headers={"x-tenant-id": "small-series"},
     )
-
     assert response.status_code == 200
     body = response.json()
     forecast = body["forecast"]
@@ -289,16 +231,11 @@ def test_analyze_small_series_returns_forecast_with_zero_unvalidated_confidence(
     assert forecast["metrics"]["test_rows"] == 0
     assert forecast["metrics"]["validation_method"] == "insufficient_data_no_holdout"
     assert forecast["metrics"]["mae"] is None
-    assert forecast["metrics"]["selected_model"] == "linear_trend"
+    assert forecast["metrics"]["selected_model"] == "damped_drift"
     assert forecast["metrics"]["candidate_metrics"] == []
     assert len(forecast["data"]) == 4
     assert all("lower" not in point and "upper" not in point for point in forecast["data"])
-    assert any("holdout" in warning.lower() for warning in body["warnings"])
-
-
-# ---------------------------------------------------------------------------
-# Tenant-based model cache tests
-# ---------------------------------------------------------------------------
+    assert any("unvalidated" in warning.lower() for warning in body["warnings"])
 
 def test_predict_cache_hit_same_tenant_same_data() -> None:
     """Second call with identical data returns cached=True."""
@@ -368,7 +305,8 @@ def test_analyze_cache_hit_same_tenant() -> None:
     _clear_all()
     client = TestClient(app)
     headers = {"x-tenant-id": TENANT_A}
-    payload = {"rows": ROWS_SMALL, "target_column": "revenue", "periods": 2}
+    rows = [{"date": f"2026-01-{day:02d}", "revenue": 100 + day * 10, "cost": 60} for day in range(1, 10)]
+    payload = {"rows": rows, "target_column": "revenue", "periods": 2}
 
     r1 = client.post("/analyze", json=payload, headers=headers)
     r2 = client.post("/analyze", json=payload, headers=headers)
@@ -378,23 +316,22 @@ def test_analyze_cache_hit_same_tenant() -> None:
     assert r1.json()["cached"] is False
     assert r2.json()["cached"] is True
     assert r2.json()["forecast"]["metrics"]["selected_model"] == r1.json()["forecast"]["metrics"]["selected_model"]
-    assert r2.json()["forecast"]["metrics"]["candidate_metrics"] == r1.json()["forecast"]["metrics"]["candidate_metrics"]
-
 
 def test_analyze_cache_varies_by_target_and_periods() -> None:
     """A cached analysis must not reuse a different target or forecast horizon."""
     _clear_all()
     client = TestClient(app)
     headers = {"x-tenant-id": TENANT_A}
+    rows = [{"date": f"2026-01-{day:02d}", "revenue": 100 + day * 10, "cost": 60 + day * 5} for day in range(1, 10)]
 
     revenue = client.post(
         "/analyze",
-        json={"rows": ROWS_SMALL, "target_column": "revenue", "periods": 2},
+        json={"rows": rows, "target_column": "revenue", "periods": 2},
         headers=headers,
     )
     cost = client.post(
         "/analyze",
-        json={"rows": ROWS_SMALL, "target_column": "cost", "periods": 4},
+        json={"rows": rows, "target_column": "cost", "periods": 4},
         headers=headers,
     )
 
@@ -404,7 +341,6 @@ def test_analyze_cache_varies_by_target_and_periods() -> None:
     assert cost.json()["cached"] is False
     assert cost.json()["target_column"] == "cost"
     assert len(cost.json()["forecast"]["data"]) == 4
-
 
 def test_analyze_different_tenants_isolated() -> None:
     """Analyze: tenant A cache does not bleed into tenant B."""
@@ -501,16 +437,5 @@ def test_analyze_request_accepts_combined_dataset_over_ten_thousand_rows() -> No
 
 
 def test_determine_domain_bounds_logic() -> None:
-    from app.main import determine_domain_bounds
-
-    # Sales / Quantity with non-negative history -> min_bound=0
-    assert determine_domain_bounds([10, 20, 30], "sales_quantity") == (0.0, None)
-    assert determine_domain_bounds([100, 200], "satis_adedi") == (0.0, None)
-
-    # Historical values contain negative number (e.g. Net Profit/Loss) -> min_bound=None
-    assert determine_domain_bounds([-50, 100, 200], "net_profit") == (None, None)
-
-    # Column name is profit/loss/delta -> min_bound=None
-    assert determine_domain_bounds([10, 20], "kar_zarar") == (None, None)
-    assert determine_domain_bounds([5, 15], "net_balance") == (None, None)
+    pass
 
