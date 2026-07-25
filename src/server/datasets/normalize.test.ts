@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import * as XLSX from 'xlsx';
 import { Dataset } from '../../lib/db';
 import { combineDatasets, DatasetCompatibilityError } from './combined';
-import { jsonToCsv } from './normalize';
+import { excelBufferToCsv, jsonToCsv } from './normalize';
 import { inferColumnKind, parseCsv, toNumber } from '../ml/parser';
 
 function dataset(id: number, filename: string, fileContent: string): Dataset {
@@ -59,6 +60,25 @@ describe('tabular source normalization', () => {
       ['tarih', 'ciro', 'bolge'],
       ['2026-01-01', '120', 'A'],
       ['2026-01-02', '180', 'B']
+    ]);
+  });
+
+  it('converts Excel buffers (.xlsx/.xls) into normalized CSV', () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet([
+      { Urun: 'Kalem', Fiyat: 15, Stok: 100 },
+      { Urun: 'Defter', Fiyat: 35, Stok: 50 }
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Sayfa1');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    const normalized = excelBufferToCsv(buffer);
+    expect(normalized.rowCount).toBe(2);
+    expect(normalized.columnCount).toBe(3);
+    expect(parseCsv(normalized.csv)).toEqual([
+      ['Urun', 'Fiyat', 'Stok'],
+      ['Kalem', '15', '100'],
+      ['Defter', '35', '50']
     ]);
   });
 

@@ -14,7 +14,7 @@ import { getCombinedUserDataset } from '../datasets/combined';
 import { parseCsv } from '../ml/parser';
 import { buildDatasetSummary } from '../ml/pipeline';
 import logger from '../../lib/logger';
-import { jsonToCsv } from '../datasets/normalize';
+import { excelBufferToCsv, jsonToCsv } from '../datasets/normalize';
 import { readFile, unlink } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -28,9 +28,9 @@ const upload = multer({
   limits: { files: 1 },
   fileFilter: (_req, file, cb) => {
     const lowerName = file.originalname.toLowerCase();
-    lowerName.endsWith('.csv') || lowerName.endsWith('.json')
+    lowerName.endsWith('.csv') || lowerName.endsWith('.json') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')
       ? cb(null, true)
-      : cb(new Error('Güvenli aktarım için CSV veya JSON dosyası yükleyin.'));
+      : cb(new Error('Güvenli aktarım için CSV, JSON veya Excel (XLSX/XLS) dosyası yükleyin.'));
   }
 });
 
@@ -42,12 +42,20 @@ async function parseUploadedFile(file: Express.Multer.File): Promise<{
   columnCount: number;
   sourceType: 'file' | 'json';
 }> {
-  const rawContent = (await readFile(file.path, 'utf-8')).replace(/^\uFEFF/, '');
-  if (rawContent.includes('\0')) throw new Error('Geçersiz ikili dosya içeriği.');
-  if (file.originalname.toLowerCase().endsWith('.json')) {
+  const lowerName = file.originalname.toLowerCase();
+  if (lowerName.endsWith('.json')) {
+    const rawContent = (await readFile(file.path, 'utf-8')).replace(/^\uFEFF/, '');
+    if (rawContent.includes('\0')) throw new Error('Geçersiz ikili dosya içeriği.');
     const normalized = jsonToCsv(rawContent);
     return { content: normalized.csv, rowCount: normalized.rowCount, columnCount: normalized.columnCount, sourceType: 'json' };
   }
+  if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
+    const buffer = await readFile(file.path);
+    const normalized = excelBufferToCsv(buffer);
+    return { content: normalized.csv, rowCount: normalized.rowCount, columnCount: normalized.columnCount, sourceType: 'file' };
+  }
+  const rawContent = (await readFile(file.path, 'utf-8')).replace(/^\uFEFF/, '');
+  if (rawContent.includes('\0')) throw new Error('Geçersiz ikili dosya içeriği.');
   const metadata = metadataFromContent(rawContent);
   return { content: rawContent, ...metadata, sourceType: 'file' };
 }
@@ -72,7 +80,7 @@ function uploadHandler(req: AuthenticatedRequest, res: Response, _next: NextFunc
       const parsedFile = await parseUploadedFile(req.file);
       const { content, rowCount, columnCount, sourceType } = parsedFile;
       if (rowCount < 1 || columnCount < 1) {
-        return res.status(400).json({ error: { code: 'EMPTY_DATASET', message: 'CSV başlık ve en az bir veri satırı içermelidir.' } });
+        return res.status(400).json({ error: { code: 'EMPTY_DATASET', message: 'Veri seti başlık ve en az bir veri satırı içermelidir.' } });
       }
       const safeFilename = req.file.originalname.replace(/[\r\n\0]/g, '').slice(0, 200);
       const id = await saveUserDataset(
@@ -101,7 +109,7 @@ function uploadHandler(req: AuthenticatedRequest, res: Response, _next: NextFunc
         return res.status(413).json({ error: { code: e.code, message: e.message } });
       }
       logger.error(`Dosya işleme hatası: ${e.message}`);
-      res.status(500).json({ error: { code: 'PARSE_ERROR', message: 'Dosya okunamadı.' } });
+      res.status(400).json({ error: { code: 'PARSE_ERROR', message: e.message || 'Dosya okunamadı.' } });
     } finally {
       await unlink(req.file.path).catch((cleanupError) => logger.warn('Geçici veri dosyası silinemedi.', { cleanupError }));
     }

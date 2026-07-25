@@ -8,7 +8,14 @@ import re
 import threading
 import unicodedata
 from collections import OrderedDict
-from typing import Annotated, Any, Self
+from typing import Annotated, Any
+try:
+    from typing import Self
+except ImportError:
+    try:
+        from typing_extensions import Self
+    except ImportError:
+        Self = Any
 
 import numpy as np
 import pandas as pd
@@ -347,10 +354,19 @@ def predict(
     future_t = pd.DataFrame({"t": np.arange(len(frame), len(frame) + request.periods)})
     future_values = model.predict(future_t)
     last_date = frame["date"].max()
-    forecast = [
-        {"date": (last_date + pd.DateOffset(months=i + 1)).date().isoformat(), "value": round(float(value), 2)}
-        for i, value in enumerate(future_values)
-    ]
+
+    min_bound, max_bound = determine_domain_bounds(frame["value"])
+    forecast = []
+    for i, value in enumerate(future_values):
+        val = float(value)
+        if min_bound is not None:
+            val = max(min_bound, val)
+        if max_bound is not None:
+            val = min(max_bound, val)
+        forecast.append({
+            "date": (last_date + pd.DateOffset(months=i + 1)).date().isoformat(),
+            "value": round(val, 2),
+        })
 
     response = PredictResponse(
         forecast=forecast,
@@ -566,7 +582,7 @@ def is_identifier_column(column: str, series: pd.Series) -> bool:
 
 def is_date_column(column: str, series: pd.Series) -> bool:
     name = normalize_column_name(column)
-    has_date_hint = bool(re.search(r"date|tarih|zaman|time|gun|ay|month", name))
+    has_date_hint = bool(re.search(r"\b(date|tarih|zaman|time|gun|ay|month)\b", name))
     if pd.api.types.is_numeric_dtype(series) and not has_date_hint:
         return False
     return pd.to_datetime(series, errors="coerce", dayfirst=True, format="mixed").notna().mean() >= 0.7
@@ -736,6 +752,50 @@ def _future_dates(dates: pd.Series, periods: int) -> tuple[list[pd.Timestamp], f
     cadence_days = float(np.median(positive_differences)) if len(positive_differences) else 1.0
     generated = [date_index[-1] + pd.Timedelta(days=cadence_days * step) for step in range(1, periods + 1)]
     return generated, max(cadence_days, 1.0), "median_observed_interval"
+
+
+def determine_domain_bounds(
+    values: np.ndarray | pd.Series | list[float],
+    column_name: str | None = None,
+) -> tuple[float | None, float | None]:
+    """Dynamically determine lower and upper domain bounds for forecasting intervals and predictions.
+
+    If historical values contain any negative numbers, or if column name indicates
+    metrics that can naturally be negative (profit, loss, margin, delta, growth, etc.),
+    no lower bound constraint is enforced.
+
+    Otherwise (e.g. sales, quantity, stock, revenue, count, or all non-negative historical values),
+    lower bound is capped at 0.0.
+    """
+    clean_values = np.asarray(values, dtype=float)
+    clean_values = clean_values[~np.isnan(clean_values)]
+
+    col_lower = (column_name or "").lower()
+
+    # 1. Rule: If historical values contain negative numbers, allow negative lower bounds
+    if len(clean_values) > 0 and np.any(clean_values < 0):
+        return None, None
+
+    # 2. Rule: Check column name for domain keywords that can naturally be negative
+    unbounded_keywords = [
+        "kar", "profit", "loss", "zarar", "net", "delta", "change",
+        "growth", "bakiye", "balance", "margin", "diff", "fark", "temp", "sicaklik"
+    ]
+    if any(kw in col_lower for kw in unbounded_keywords):
+        return None, None
+
+    # 3. Rule: Non-negative history or strictly positive metric keywords (sales, quantity, stock, count, etc.)
+    strictly_positive_keywords = [
+        "satis", "sales", "adet", "quantity", "stok", "stock",
+        "ciro", "revenue", "count", "ziyaret", "visitor", "price", "fiyat"
+    ]
+    if len(clean_values) > 0 and np.all(clean_values >= 0):
+        return 0.0, None
+
+    if any(kw in col_lower for kw in strictly_positive_keywords):
+        return 0.0, None
+
+    return None, None
 
 
 def build_regression_forecast(
@@ -951,6 +1011,17 @@ def build_regression_forecast(
     if is_constant:
         confidence = 0.0
 
+    # Row-order fallback has no guaranteed temporal meaning: the holdout split
+    # only validates extrapolation along whatever order the caller happened to
+    # submit rows in, not a real chronological trend. Confidence is halved so
+    # it cannot be mistaken for a genuine time-based forecast.
+    if date_column is None:
+        confidence = round(confidence * 0.5, 4)
+        warnings.append(
+            "No date column was available, so the forecast trend is based on input row order, "
+            "not real chronological time; confidence has been reduced accordingly."
+        )
+
     if selected_model == "naive_last_value":
         predicted = np.full(periods, values[-1], dtype=float)
     elif selected_model == "moving_average_3":
@@ -964,6 +1035,8 @@ def build_regression_forecast(
     else:
         predicted = _linear_trend_predictions(time_values, values, future_t)
 
+    non_negative_history = bool(np.all(values >= -1e-9))
+
     forecast_data: list[dict[str, Any]] = []
     for index, value in enumerate(predicted):
         point: dict[str, Any] = {
@@ -974,8 +1047,12 @@ def build_regression_forecast(
             point["date"] = future_dates[index].date().isoformat()
         if interval_base is not None:
             width = interval_base * np.sqrt(1.0 + (index + 1) / max(train_rows, 1))
-            point["lower"] = round(float(value - width), 4)
-            point["upper"] = round(float(value + width), 4)
+            lower = value - width
+            upper = value + width
+            if non_negative_history and value >= 0:
+                lower = max(0.0, lower)
+            point["lower"] = round(float(lower), 4)
+            point["upper"] = round(float(upper), 4)
         forecast_data.append(point)
 
     metrics: dict[str, Any] = {

@@ -498,3 +498,19 @@ def test_analyze_request_accepts_combined_dataset_over_ten_thousand_rows() -> No
     request = AnalyzeRequest(rows=[{"value": index} for index in range(14_796)])
 
     assert len(request.rows) == 14_796
+
+
+def test_determine_domain_bounds_logic() -> None:
+    from app.main import determine_domain_bounds
+
+    # Sales / Quantity with non-negative history -> min_bound=0
+    assert determine_domain_bounds([10, 20, 30], "sales_quantity") == (0.0, None)
+    assert determine_domain_bounds([100, 200], "satis_adedi") == (0.0, None)
+
+    # Historical values contain negative number (e.g. Net Profit/Loss) -> min_bound=None
+    assert determine_domain_bounds([-50, 100, 200], "net_profit") == (None, None)
+
+    # Column name is profit/loss/delta -> min_bound=None
+    assert determine_domain_bounds([10, 20], "kar_zarar") == (None, None)
+    assert determine_domain_bounds([5, 15], "net_balance") == (None, None)
+

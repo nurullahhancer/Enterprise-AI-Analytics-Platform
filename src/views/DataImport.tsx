@@ -276,7 +276,12 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
     onDragEnter: () => undefined,
     onDragLeave: () => undefined,
     onDragOver: () => undefined,
-    accept: { 'text/csv': ['.csv'], 'application/json': ['.json'] },
+    accept: {
+      'text/csv': ['.csv'],
+      'application/json': ['.json'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
+    },
     multiple: false,
     maxFiles: 1,
     disabled: !canWrite || isUploading,
@@ -308,7 +313,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
           </div>
           <h1 className="text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-5xl">Verilerim</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-white/55">
-            Satış, müşteri veya iş dosyalarınızı yükleyin. Birlikte incelenebilen dosyalar otomatik olarak bir araya getirilir; diğer dosyalarınız silinmeden ayrı tutulur.
+            Satış, müşteri, Excel veya iş dosyalarınızı yükleyin. Birlikte incelenebilen dosyalar otomatik olarak bir araya getirilir; diğer dosyalarınız silinmeden ayrı tutulur.
           </p>
         </div>
         <div className="relative flex flex-wrap gap-2">
@@ -451,13 +456,15 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
                 <div className="p-10 text-center">
                   <FileSpreadsheet className="mx-auto h-8 w-8 text-slate-300 dark:text-white/25" />
                   <p className="mt-3 text-sm font-bold text-slate-700 dark:text-white">Analiz havuzu boş</p>
-                  <p className="mt-1 text-xs text-slate-400 dark:text-white/40">CSV/JSON yükleyin veya REST kaynağından veri eşitleyin.</p>
+                  <p className="mt-1 text-xs text-slate-400 dark:text-white/40">CSV, Excel veya JSON yükleyin ya da REST kaynağından veri eşitleyin.</p>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100 dark:divide-white/10">
                   {datasets.map((dataset) => {
                     const fromApi = dataset.source_type === 'rest' || dataset.filename.endsWith('_ingest.csv');
-                    const sourceLabel = dataset.source_type === 'sql' ? 'SQL' : fromApi ? 'REST' : dataset.source_type === 'json' ? 'JSON' : dataset.source_type === 'etl' ? 'ETL' : 'CSV';
+                    const lowerName = dataset.filename.toLowerCase();
+                    const isExcel = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls');
+                    const sourceLabel = dataset.source_type === 'sql' ? 'SQL' : fromApi ? 'REST' : isExcel ? 'EXCEL' : dataset.source_type === 'json' ? 'JSON' : dataset.source_type === 'etl' ? 'ETL' : 'CSV';
                     const included = Number(dataset.include_in_analysis) === 1;
                     const inCurrentGroup = analysisDatasetIds.has(dataset.id);
                     const isFocus = Number(dataset.is_active) === 1;
@@ -468,7 +475,9 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
                             'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border',
                             fromApi
                               ? 'border-sky-200 bg-sky-50 text-sky-600 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-400'
-                              : 'border-indigo-200 bg-indigo-50 text-indigo-600 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10 dark:text-[#FFD700]',
+                              : isExcel
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400'
+                                : 'border-indigo-200 bg-indigo-50 text-indigo-600 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10 dark:text-[#FFD700]',
                           )}>
                             {fromApi ? <Network className="h-4 w-4" /> : <FileSpreadsheet className="h-4 w-4" />}
                           </div>
@@ -548,7 +557,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
           <aside className="min-w-0">
             <div className="mb-4">
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">Dosya yükle</h2>
-              <p className="mt-1 text-xs text-slate-500 dark:text-white/45">CSV veya JSON · dosya boyutu sınırı yok</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-white/45">CSV, Excel (XLSX/XLS) veya JSON · dosya boyutu sınırı yok</p>
             </div>
             <div
               {...getRootProps()}
@@ -566,7 +575,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
                 {isUploading ? <RefreshCw className="h-5 w-5 animate-spin" /> : <UploadCloud className="h-5 w-5" />}
               </div>
               <p className="mt-4 text-sm font-bold text-slate-800 dark:text-white">
-                {isUploading ? 'Dosya işleniyor' : isDragActive ? 'Dosyayı bırakın' : 'CSV veya JSON dosyasını sürükleyin'}
+                {isUploading ? 'Dosya işleniyor' : isDragActive ? 'Dosyayı bırakın' : 'CSV, Excel veya JSON dosyasını sürükleyin'}
               </p>
               <p className="mt-2 text-xs leading-5 text-slate-400 dark:text-white/35">veya cihazınızdan güvenli bir veri dosyası seçin</p>
               <span className="mt-5 inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 dark:border-white/15 dark:text-white/70">

@@ -37,3 +37,9 @@ backups/
 public/downloads/*.zip
 public/downloads/*.apk
 
+# Python virtual environment and caches
+__pycache__/
+*.pyc
+.venv/
+venv/
+
