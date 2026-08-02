@@ -1,6 +1,6 @@
 # Production Kurulum ve Operasyon Rehberi
 
-Bu belge proje kökündeki kanonik React/Vite + Express + SQLite uygulamasının tek bir Linux VDS üzerinde Docker Compose ile kurulmasını ve işletilmesini anlatır. `infra/docker-compose.yml` içindeki geniş referans topoloji production kurulumu değildir.
+Bu belge kanonik React/Vite + Express + PostgreSQL + internal FastAPI topolojisinin Ubuntu 22.04/24.04 VDS üzerinde Docker Compose ile kurulmasını ve işletilmesini anlatır. SQLite yalnız yerel test ve tek seferlik eski veri aktarımı içindir; production veritabanı değildir. `backend/` ve `frontend/` referans uygulamaları production Compose tarafından başlatılmaz.
 
 ## 1. Gereksinimler
 
@@ -50,10 +50,29 @@ chmod 600 .env
 | `APP_URL` | Tam HTTPS kullanıcı adresi | Bu VDS'de `https://45.133.36.77`; domain'de `https://DOMAIN` |
 | `JWT_SECRET` | En az 32 tahmin edilemez karakter | Benzersiz olmalı; değiştirilmesi tüm token'ları geçersiz kılar |
 | `DATA_ENCRYPTION_KEY` | 32 bayt base64 veya 64 hex karakter | AES-256-GCM konnektör şifreleme anahtarı; kaybı mevcut ayarları okunamaz yapar |
+| `POSTGRES_PASSWORD` | En az 32 rastgele karakter | Yalnız yönetim/backup rolü |
+| `POSTGRES_APP_PASSWORD` | En az 32 rastgele karakter | `NOBYPASSRLS` uygulama rolü |
+| `DATABASE_URL` | `reai_app` rolünün PostgreSQL URL'si | Uygulama superuser ile bağlanmamalıdır |
+| `ML_INTERNAL_API_KEY` | En az 32 rastgele karakter | Node→FastAPI çağrılarının zorunlu internal kimliği |
+| `BACKUP_AGE_RECIPIENT` | age public recipient | Her dump bu alıcıya şifrelenir |
+| `BACKUP_AGE_IDENTITY_FILE` | UID/GID `70:70`, `0400` private age key yolu | Non-root backup/restore container'ına Docker secret olarak bağlanır |
 | `BOOTSTRAP_ADMIN_EMAIL` | İlk admin'in normalize e-postası | Yalnızca tam eşleşen yeni kayıt admin olur |
 | `BOOTSTRAP_ADMIN_TOKEN` | En az 32 tahmin edilemez karakter | İlk admin kaydında `X-Bootstrap-Token` ile sunulur; işlemden sonra kaldırılır |
 
 Anahtarları güvenli parola yöneticisinde/secret vault'ta kriptografik rastgele ürettirin. Bu depoda gerçek anahtar veya varsayılan production parolası yoktur.
+
+Backup age anahtarını ilk kurulumda oluşturun; private dosyayı Git'e eklemeyin:
+
+```bash
+install -d -m 700 secrets
+docker build -t reai-backup-keygen deploy/backup
+docker run --rm --user 0 -v "$PWD/secrets:/keys" reai-backup-keygen age-keygen -o /keys/backup-age-key.txt
+sudo chown 70:70 secrets/backup-age-key.txt
+sudo chmod 0400 secrets/backup-age-key.txt
+docker run --rm -v "$PWD/secrets:/keys:ro" reai-backup-keygen age-keygen -y /keys/backup-age-key.txt
+```
+
+Son komut yalnız public `age1...` recipient değerini gösterir; bunu `BACKUP_AGE_RECIPIENT` yapın. `BACKUP_AGE_IDENTITY_FILE=./secrets/backup-age-key.txt` olarak kalabilir. Parent dizinin UID 70 tarafından geçilebilir olduğundan emin olun. Private key'i ayrı, erişim kontrollü secret vault/off-site kasada da saklayın.
 
 ### 3.2 Ağ ve proxy
 
@@ -121,6 +140,8 @@ Admin hesabı oluşmadan public registration'ı açık bırakmayın.
 | `ALLOW_EXTERNAL_AI_DATA` | `false` | Müşteri verisinin dış AI servisine gönderimine açık yönetici izni |
 | `AI_REQUEST_TIMEOUT_MS` | `30000` | Harici AI istek zaman aşımı |
 | `AI_MAX_OUTPUT_TOKENS` | `1024` | Yanıt token limiti |
+| `AI_MAX_RETRIES` | `2` | Yalnız geçici 429/502/504 hatalarında exponential backoff |
+| `AI_INPUT_COST_PER_MILLION_USD` / `AI_OUTPUT_COST_PER_MILLION_USD` | `0` | Sağlayıcı fiyatına göre micro-USD maliyet kaydı |
 
 Servis anahtarı ve `ALLOW_EXTERNAL_AI_DATA=true` birlikte etkin değilse AI çağrısı yapılmaz. Müşteri sözleşmesi, veri sınıflandırması ve sağlayıcı koşulları incelenmeden harici AI sağlayıcısına gerçek müşteri verisi göndermeyin.
 
@@ -148,11 +169,11 @@ Production konnektörü yalnızca HTTPS GET/JSON kullanır; redirect, private/li
 | `ML_JOB_TIMEOUT_MS` | 60.000 | Bir internal ML çağrısının azami süresi |
 | `LOGIN_IP_MAX_ATTEMPTS` | 30 | IP başına 15 dakikalık giriş rezervasyon sınırı; IP+e-posta sınırı ayrıca 5'tir |
 | `AI_REQUESTS_PER_HOUR` | 20 | Kullanıcı başına dış AI çağrısı/saat |
-| `AUDIT_MAX_ENTRIES_PER_USER` | 2.000 | Kullanıcı başına audit kayıt kotası; liste son 200 kaydı döndürür |
+| `AUDIT_MAX_ENTRIES_PER_ORG` | 10.000 | Organizasyon başına audit kayıt kotası |
 | `NOTIFICATION_MAX_ENTRIES_PER_USER` | 500 | Kullanıcı başına bildirim kotası; liste son 100 kaydı döndürür |
 | `JSON_BODY_LIMIT` | `1mb` | Express JSON body sınırı |
 | `ML_CACHE_MAX_ENTRIES` | 256 | FastAPI LRU cache üst sınırı |
-| `ML_INTERNAL_API_KEY` | boş | Internal ML cache yönetim endpoint'i için isteğe bağlı anahtar |
+| `ML_INTERNAL_API_KEY` | zorunlu | Tüm model/cache endpoint'lerinde constant-time doğrulanan internal anahtar |
 | `LOG_LEVEL` | `info` | Uygulama log seviyesi |
 
 `PORT=3010`, `DB_PATH=data/reai.db` ve `ML_SERVICE_URL=http://ml-service:8000` Compose içinde production topolojisine sabitlenmiştir. Normal VDS kurulumunda değiştirmeyin.
@@ -161,7 +182,7 @@ Login/AI sayaçları ve ML kuyruğu process-içidir; restart ile sıfırlanır v
 
 Dashboard, özet, ETL, ML, rapor ve veri destekli AI kullanıcının kayıtlı bütün CSV'lerini `kaynak_dosya` bilgisiyle birleştirir. “Aktif” işareti analiz filtresi değildir. ETL çıktıları aynı havuza eklendiği için orijinal ve türetilmiş satırların çift sayılmasını ürün/operasyon katmanı yönetmelidir.
 
-`VITE_API_BASE_URL` yalnızca ayrı origin/mobil build için build-time değerdir. Aynı-origin web production kurulumunda boş bırakılır. Android cleartext trafik kabul etmez; mobil build'de güvenilen `VITE_API_BASE_URL=https://...`, `ALLOWED_ORIGINS=https://localhost` ve `npm run cap:sync` gerekir. Cihaz E2E, release signing ve store yayını ayrı teslimat işleridir.
+`VITE_API_BASE_URL` yalnız ayrı web origin içindir. Android build, sabit bir IP fallback'i kullanmaz; `VITE_MOBILE_API_BASE_URL=https://...` zorunludur. `ALLOWED_ORIGINS=https://localhost` ve `npm run cap:sync` gerekir. Script localhost/HTTP veya eksik mobil URL ile fail-closed davranır. Cihaz E2E, release signing ve mağaza yayını ayrıca doğrulanmalıdır.
 
 ## 4. Yapılandırma doğrulama
 
@@ -220,16 +241,16 @@ Production VDS'de hosta Node/Python bağımlılıkları kurmak zorunlu değildir
 
 ## 6. Veritabanı ve migration
 
-Ayrı bir migration komutu yoktur. Uygulama başlangıçta schema'yı idempotent olarak hazırlar ve eski dataset tablolarından yeni `user_datasets_v2` tablosuna veri kopyalar. Eski tabloları silmez.
+Uygulama başlangıçta şemayı transaction ve PostgreSQL advisory lock altında idempotent biçimde hazırlar. Tenant tablolarında `organization_id`, indeks, foreign key ve `FORCE ROW LEVEL SECURITY` kurulur. Uygulama bağlantı rolü `NOBYPASSRLS` olmalıdır. Eski SQLite verisi varsa production başlatılmadan önce `npm run db:migrate:postgres` kontrollü bir kopya üzerinde çalıştırılır; kaynak dosya silinmez.
 
-Mevcut veri bulunan her güncellemeden önce bölüm 12'deki tutarlı SQLite yedeğini alın. Uygulama başlangıcını sonra gerçekleştirin:
+Mevcut veri bulunan her güncellemeden önce bölüm 12'deki şifreli PostgreSQL yedeğini alın ve restore-check'i çalıştırın. Uygulama başlangıcını sonra gerçekleştirin:
 
 ```bash
 docker compose up -d app ml-service
 docker compose logs --tail=100 app
 ```
 
-Logda veritabanı bağlantı/DDL hatası varsa deployment'ı başarılı saymayın. Production veritabanında elle `DROP`, `DELETE`, `VACUUM INTO` veya geri dönüşü olmayan schema komutu çalıştırmayın.
+Logda veritabanı bağlantı/DDL/RLS hatası varsa deployment'ı başarılı saymayın. Production veritabanında elle `DROP`, limitsiz `DELETE` veya geri dönüşü olmayan schema komutu çalıştırmayın.
 
 ## 7. Başlatma
 
@@ -249,7 +270,7 @@ docker compose exec -T app node -e "fetch('http://127.0.0.1:3010/api/health').th
 
 Sağlık cevabı:
 
-- `status: ok`: SQLite, internal ML ve authentication hazırdır.
+- `status: ok`: PostgreSQL, internal ML ve authentication hazırdır.
 - HTTP 503 + `status: degraded`, `authentication: configuration-required`: `JWT_SECRET` yok/geçersizdir; giriş bilinçli olarak kapalıdır.
 - `ai: optional-key-missing`: hata değildir; opsiyonel AI anahtarı verilmemiştir.
 - HTTP 503 / `database: error` veya `mlService: error`: uygulama hazır değildir.
@@ -288,13 +309,13 @@ Compose servislerinde `restart: unless-stopped` vardır. Docker daemon sunucu a�
 ```bash
 docker compose ps
 docker compose exec -T app id
-docker compose exec -T app node -e "const fs=require('fs');const s=fs.statSync('/app/data/reai.db');console.log({databaseBytes:s.size,mode:(s.mode&511).toString(8)})"
+docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 docker compose restart app ml-service
 docker compose ps
 curl -fsS http://127.0.0.1:3000/api/health
 ```
 
-Yeniden başlatma öncesi ve sonrası yalnızca dosya boyutu/metadatasını karşılaştırın; kullanıcı verisini terminale yazdırmayın. Uygulama içinden daha önce oluşturulmuş test kaydının/veri setinin halen göründüğünü doğrulamak kalıcılık kanıtıdır.
+Yeniden başlatma öncesi ve sonrası uygulama içinden daha önce oluşturulmuş sentetik test kaydının/veri setinin halen göründüğünü doğrulayın; müşteri verisini terminale yazdırmayın.
 
 Hostta yalnızca beklenen portların dinlediğini kontrol edin:
 
@@ -396,7 +417,7 @@ HTTP-01 doğrulaması ve yenileme için port 80'i tamamen kapatmayın; normal ku
 
 ## 12. PostgreSQL yedekleme ve geri yükleme testi
 
-Production Compose, yönetim rolüyle her gün custom-format `pg_dump` alan `postgres-backup` servisini içerir. Dump önce `pg_restore --list` ile doğrulanır, SHA-256 dosyası yazılır ve varsayılan olarak 14 gün saklanır. Uygulamanın durdurulması gerekmez:
+Production Compose, yönetim rolüyle her gün custom-format `pg_dump` alan `postgres-backup` servisini içerir. Dump stream halinde age public recipient ile şifrelenir; düz dump diske yazılmaz. Şifre çözme + `pg_restore --list` doğrulaması, SHA-256 ve `last-success` health işareti tamamlandıktan sonra dosya atomik olarak yayınlanır. Varsayılan saklama 14 gündür.
 
 ```bash
 cd /root/Enterprise-AI-Analytics-Platform
@@ -405,7 +426,7 @@ docker compose logs --tail=20 postgres-backup
 docker compose --profile maintenance run --rm postgres-restore-check
 ```
 
-Restore-check en güncel checksum'u doğrular, production'dan farklı geçici `reai_restore_check` veritabanı oluşturur, dump'ı yükler, çekirdek tabloları sorgular ve geçici veritabanını kaldırır. Production veritabanına yazmaz. `postgres-backups` volume'ü aynı VDS üzerindedir; felaket kurtarma için dump'ları ayrıca farklı fiziksel sistemde şifreli saklayın. `.env`/secret'lar veritabanı yedeğine gömülü değildir; ayrı secret vault ve erişim politikasıyla korunmalıdır.
+Restore-check en güncel checksum'u doğrular, private age identity Docker secret'ı ile stream halinde çözer, production'dan farklı geçici `reai_restore_check` veritabanı oluşturur, çekirdek tabloları sorgular ve geçici veritabanını kaldırır. Production veritabanını değiştirmez. Private key'i yedeklerle aynı sistemdeki off-site kopyaya koymayın.
 
 Önerilen asgari politika:
 
@@ -549,15 +570,15 @@ docker compose exec -T app node -e "fetch('http://ml-service:8000/health').then(
 
 İstek satır/sütun/hücre limitlerini veya container RAM limitini aşıyor olabilir. `429 ML_QUEUE_FULL`, process-içi kuyruğun toplam veya kullanıcı kotasına ulaştığını gösterir; job durumlarını/logları inceleyin, servisi yalnız sayacı sıfırlamak amacıyla restart etmeyin.
 
-### SQLite hatası / read-only
+### PostgreSQL / RLS hatası
 
 ```bash
-docker compose exec -T app sh -c 'id; ls -ld /app/data; test -w /app/data'
+docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 docker compose logs --tail=200 app
-docker inspect --format '{{json .Mounts}}' enterprise-ai-app-1
+docker compose logs --tail=200 postgres
 ```
 
-Volume'ü silmeyin. İzin düzeltmeden önce güncel yedek alın ve doğru container UID'sini doğrulayın.
+Volume'ü veya RLS policy'lerini silmeyin. Önce bağlantının `reai_app` rolünü, transaction tenant context'ini ve migration logunu doğrulayın.
 
 ### Port kullanılıyor
 

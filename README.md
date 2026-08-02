@@ -39,7 +39,7 @@ Uygulama, yüksek güvenlik standartlarına uygun olarak mikroservis benzeri bir
           ▼
   ┌───────────────────────────────────────────────────────────┐
   │  Node.js (Express API) + React SPA (Vite)                │
-  │  - Session Management & Scrypt JWT Authentication        │
+  │  - Scrypt Password Hashing & Rotating JWT Sessions       │
   │  - Row Level Security (RLS) & Multi-Tenant Routing       │
   └───────────────┬───────────────────────────┬───────────────┘
                   │                           │
@@ -63,8 +63,9 @@ Uygulama, yüksek güvenlik standartlarına uygun olarak mikroservis benzeri bir
 * **Otomatik Sınıflandırma**: `Logistic Regression` ile ikili sınıflandırma (F1-score, Precision, Recall, ROC-AUC).
 
 ### 🛡️ 2. Kurumsal Güvenlik & Çoklu Kiracılık (Multi-Tenancy)
-* **PostgreSQL Forced RLS**: Veritabanı seviyesinde kiracı izolasyonu. Kullanıcıların verisi kesinlikle diğer organizasyonlarla karışmaz.
+* **PostgreSQL Forced RLS**: 24 tenant veri tablosunda `ENABLE` + `FORCE ROW LEVEL SECURITY`; tenant context transaction-local olarak taşınır ve pool reuse testleriyle doğrulanır.
 * **Granüler Yetkilendirme (RBAC)**: `Admin`, `Analyst` ve `Viewer` rolleri ile dinamik arayüz ve API erişim kısıtlaması.
+* **Kısa Ömürlü Oturumlar**: 30 dakikalık access token, hashlenmiş refresh token rotation, reuse tespiti ve token ailesi iptali.
 * **Audit & Denetim Günlüğü**: Kullanıcıların tüm kritik işlemleri (giriş, veri yükleme, analiz, rol değişimi) değiştirilemez log kayıtları olarak saklanır.
 
 ### 💳 3. B2B SaaS ve Faturalandırma Altyapısı
@@ -72,7 +73,7 @@ Uygulama, yüksek güvenlik standartlarına uygun olarak mikroservis benzeri bir
 * **Kota ve Limit Yönetimi**: Aylık AI/ML kullanım sayaçları, veri boyutu ve üye kısıtlamaları.
 
 ### 🔄 4. Veri İşleme (ETL) ve Konnektörler
-* **CSV / JSON İçe Aktarım**: Büyük dosyalar için gelişmiş yükleme ve tip algılama.
+* **CSV / JSON / XLSX İçe Aktarım**: 25 MiB/50.000 satır/500 kolon sınırı; magic-byte, zip-bomb, makro, path traversal ve formül enjeksiyonu kontrolleri.
 * **REST API Konnektörü**: Şifrelenmiş (AES-256-GCM) ve SSRF korumalı dış REST kaynaklarından anlık görüntü senkronizasyonu.
 * **ETL Pipeline**: Medyan doldurma, IQR aykırı değer temizleme, otomatik şema eşleştirme ve `kaynak_dosya` izleme (lineage).
 
@@ -114,6 +115,12 @@ chmod 600 .env
 ```env
 JWT_SECRET=en_az_32_karakterlik_tahmin_edilemez_gizli_anahtar
 DATA_ENCRYPTION_KEY=32_baytlik_base64_veya_64_karakter_hex_aes_anahtari
+POSTGRES_PASSWORD=benzersiz_32_karakterden_uzun_yonetim_parolasi
+POSTGRES_APP_PASSWORD=benzersiz_32_karakterden_uzun_uygulama_parolasi
+DATABASE_URL=postgresql://reai_app:URL_ENCODED_PAROLA@postgres:5432/reai
+ML_INTERNAL_API_KEY=benzersiz_32_karakterden_uzun_internal_anahtar
+BACKUP_AGE_RECIPIENT=age1...
+BACKUP_AGE_IDENTITY_FILE=./secrets/backup-age-key.txt
 BOOTSTRAP_ADMIN_EMAIL=admin@kurumunuz.com
 BOOTSTRAP_ADMIN_TOKEN=en_az_32_karakterlik_bootstrap_secret
 APP_URL=https://sunucu-ip-veya-domain.com
@@ -172,6 +179,8 @@ Eksiksiz yapılandırma seçenekleri `.env.example` dosyasında yer almaktadır.
 | `DATABASE_URL` | PostgreSQL bağlantı adresi (`NOBYPASSRLS` erişim rolü ile) |
 | `DATA_ENCRYPTION_KEY` | Konnektör şifrelemeleri için AES-256 key |
 | `ML_SERVICE_URL` | İç Docker ağındaki FastAPI servis adresi (`http://ml-service:8000`) |
+| `ML_INTERNAL_API_KEY` | Node→FastAPI model/cache çağrılarında zorunlu 32+ karakter anahtar |
+| `BACKUP_AGE_RECIPIENT` | PostgreSQL dump'larını diske yazılmadan önce şifreleyen age public recipient |
 | `IYZICO_*` | iyzico abonelik checkout ve V3 webhook anahtarları |
 | `NVIDIA_API_KEY` / `GEMINI_API_KEY` | İsteğe bağlı LLM yapay zeka entegrasyonu anahtarı |
 
@@ -199,6 +208,8 @@ docker compose --profile test run --rm ml-test
 - **SSRF Koruması**: REST konnektörlerinde iç ağ IP'lerine (127.0.0.1, 10.x.x.x vb.) erişim yasaktır, yalnızca allowlist adreslerine izin verilir.
 - **Formül Enjeksiyon Koruması**: Dışa aktarılan CSV raporlarında `=`, `+`, `-`, `@` ile başlayan hücre değerleri otomatik olarak temizlenir.
 - **Scrypt Password Hashing**: Kullanıcı parolaları yüksek maliyetli `scrypt` algoritması ile özetlenir.
+- **Internal ML Authentication**: Model ve cache endpoint'leri constant-time karşılaştırılan servis anahtarı olmadan yanıt vermez.
+- **Şifreli ve Restore-Testli Backup**: Günlük dump'lar age ile şifrelenir; maintenance profili checksum, decrypt ve izole restore testini gerçekleştirir.
 
 ---
 
