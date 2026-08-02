@@ -7,7 +7,7 @@
 **Validation date:** 2 August 2026 (UTC)
 **Decision:** **NO-GO for general production release**
 
-The platform is now a substantially hardened, testable release candidate. The canonical application, PostgreSQL tenant isolation, internal ML authentication, encrypted backup/restore and container vulnerability gates were verified locally. It is not labelled production-ready because the remote GitHub Actions run, real payment/LLM provider flows, Android release artifact, off-site backup alerting and several operational controls remain unverified.
+The platform is now a substantially hardened, testable release candidate. The canonical application, PostgreSQL tenant isolation, internal ML authentication, encrypted backup/restore, container vulnerability gates and remote GitHub Actions pipeline were verified. It is not labelled production-ready because real payment/LLM provider flows, the Android release artifact, off-site backup alerting and several operational controls remain unverified.
 
 ## 1. Previous state
 
@@ -110,6 +110,7 @@ Destructive validation was confined to isolated Compose projects and their tempo
 | Area | Result |
 |---|---|
 | Root TypeScript/Vitest/Supertest | 93 passed, 2 PostgreSQL-only tests skipped in SQLite run |
+| Remote GitHub Actions | All 6 jobs passed on code commit `491ba6b` |
 | PostgreSQL Express integration | 39 passed on a clean isolated database |
 | PostgreSQL forced RLS | 2 passed; 24 protected tables verified |
 | FastAPI ML | Ruff passed; 73 tests passed |
@@ -161,7 +162,7 @@ Destructive validation was confined to isolated Compose projects and their tempo
 ### Mandatory before general production
 
 1. Revoke the exposed GitHub PAT and audit repository/account access.
-2. Push the branch and require a successful remote GitHub Actions run; local workflow equivalence is not a substitute.
+2. Open and review a pull request, enable required status checks and merge only while the GitHub Actions pipeline remains green.
 3. Run iyzico sandbox tests with real signed webhooks, refund and chargeback reconciliation. Automated refund/chargeback handling is incomplete.
 4. Run a real LLM provider test with budget ceilings and confirm configured token prices; no provider secret was used in isolated smoke.
 5. Copy encrypted backups off-host, connect failure alerts and perform a restore drill on a separate host.
@@ -178,7 +179,7 @@ Destructive validation was confined to isolated Compose projects and their tempo
 
 ## 12. Production release decision
 
-**NO-GO.** Critical local code/container gates pass, but the user's own readiness definition requires green remote CI, verified payment/LLM flows, off-site backup evidence and complete production smoke. Those conditions are not all satisfied. The correct label is **hardened release candidate**.
+**NO-GO.** Critical local and remote CI gates pass, but the user's own readiness definition also requires verified payment/LLM flows, off-site backup evidence and a real-provider production smoke. Those conditions are not all satisfied. The correct label is **hardened release candidate**.
 
 ## 13. Ubuntu VDS commands
 
@@ -217,12 +218,12 @@ Do not use `docker compose down -v` on a production host.
 | Security | 8.4 | Forced RLS, rotating sessions, clean images; PAT rotation and malware/shared limiter gaps remain |
 | Code quality | 8.0 | Typed build and focused fixes; large legacy surface remains |
 | Architecture | 8.5 | Canonical path is explicit; reference workspaces are isolated |
-| Test coverage | 8.4 | Strong local unit/integration/RLS/ML coverage; remote CI and load tests missing |
+| Test coverage | 8.6 | Local unit/integration/RLS/ML coverage and remote CI are green; load tests remain |
 | ML reliability | 8.1 | Validation/baseline/interval controls; production drift/retraining not proven |
-| DevOps | 8.2 | Hardened Compose, CI gates and restore check; off-site alerting unproven |
+| DevOps | 8.4 | Hardened Compose, green remote CI and restore check; off-site alerting unproven |
 | Performance | 7.1 | Bounded resources/queries; no load test and large frontend chunk |
 | Usability | 7.6 | Core web smoke passed; Android release not verified |
 | Documentation | 8.6 | Architecture, security, API, deployment, backup, runbook and model card aligned |
-| Production readiness | 7.2 | Critical local gates green, external release gates incomplete |
+| Production readiness | 7.4 | Critical local and remote CI gates green; external release gates incomplete |
 
-**Overall: 8.0 / 10.** This is not a 10/10 or production-ready claim.
+**Overall: 8.1 / 10.** This is not a 10/10 or production-ready claim.
