@@ -8,8 +8,8 @@ jobs:
   application:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: npm
@@ -32,9 +32,12 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
+    env:
+      Jwt__Key: ci-dotnet-jwt-9F4k2L8m7Q1v6Z3p5R0x8N2w
+      Secrets__Key: ci-dotnet-secrets-8Q2v5N7x1R4k9Z6p3L0w2C8h
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: 8.0.x
       - run: dotnet restore backend/EnterpriseAIAnalytics.sln
@@ -54,7 +57,7 @@ jobs:
       BACKUP_AGE_RECIPIENT: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
       BACKUP_AGE_IDENTITY_FILE: /dev/null
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - run: docker compose up -d --wait postgres
       - run: docker compose --profile test build app-test
       - run: docker compose --profile test run --rm -e DATABASE_URL="$DATABASE_URL" app-test npx vitest run server.test.ts src/lib/rls.postgres.test.ts
@@ -86,8 +89,8 @@ jobs:
   ml-service:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - run: pip install -r ml-service/requirements-dev.txt pip-audit
@@ -97,8 +100,8 @@ jobs:
   reference-next-frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - run: npm ci
@@ -115,7 +118,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - run: docker build -t reai-app:ci .
       - run: docker build -t reai-ml:ci ml-service
       - run: docker build -t reai-backup:ci deploy/backup
