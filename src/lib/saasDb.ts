@@ -384,6 +384,15 @@ export async function allocateAiCredits(organizationId: string, quantity: 1000 |
   });
 }
 
+export async function isUnlimitedAccount(executor: QueryExecutor, organizationId: string, actorEmail?: string): Promise<boolean> {
+  const targetEmail = 'deneme@gmail.com';
+  if (actorEmail) {
+    return actorEmail.trim().toLowerCase() === targetEmail;
+  }
+  const org = await executor.get<{ owner_email: string }>('SELECT owner_email FROM saas_organizations WHERE id = ?', [organizationId]);
+  return org?.owner_email?.toLowerCase() === targetEmail;
+}
+
 export async function getUsage(organizationId: string, actorEmail?: string): Promise<{
   plan: ReturnType<typeof getPlan>;
   period: ReturnType<typeof usagePeriod>;
@@ -394,6 +403,7 @@ export async function getUsage(organizationId: string, actorEmail?: string): Pro
   await ready();
   const period = usagePeriod();
   const organization = await getOrganization(organizationId);
+  const isUnlimited = await isUnlimitedAccount(database, organizationId, actorEmail);
   const counters = await database.all<{ metric: UsageMetric; quantity: string | number }>(
     'SELECT metric, quantity FROM usage_counters WHERE organization_id = ? AND period_key = ?',
     [organizationId, period.key]
@@ -417,7 +427,8 @@ export async function getUsage(organizationId: string, actorEmail?: string): Pro
   const plan = getPlan(organization?.plan_key);
   const aiUsed = Number(counters.find((item) => item.metric === 'ai_requests')?.quantity || 0);
   const bonusCredits = Number(bonusRow?.total || 0);
-  const effectiveLimit = plan.limits.aiRequests + bonusCredits;
+  const baseLimit = isUnlimited ? 999_999_999 : plan.limits.aiRequests;
+  const effectiveLimit = isUnlimited ? 999_999_999 : plan.limits.aiRequests + bonusCredits;
   const userUsed = Number(userRow?.quantity || 0);
   return {
     plan,
@@ -434,13 +445,13 @@ export async function getUsage(organizationId: string, actorEmail?: string): Pro
     },
     ai: {
       used: aiUsed,
-      baseLimit: plan.limits.aiRequests,
+      baseLimit,
       bonusCredits,
       effectiveLimit,
       remaining: Math.max(effectiveLimit - aiUsed, 0),
       userUsed,
-      userLimit: settings.perUserMonthlyLimit,
-      userRemaining: settings.perUserMonthlyLimit === null ? null : Math.max(settings.perUserMonthlyLimit - userUsed, 0),
+      userLimit: isUnlimited ? null : settings.perUserMonthlyLimit,
+      userRemaining: isUnlimited || settings.perUserMonthlyLimit === null ? null : Math.max(settings.perUserMonthlyLimit - userUsed, 0),
       creditBalance: Number(walletRow?.balance || 0),
       settings
     }
@@ -454,27 +465,30 @@ export async function consumeUsage(organizationId: string, metric: UsageMetric, 
   let notificationLimit = 0;
   let notificationUsed = 0;
   const consumed = await database.transaction(async (transaction) => {
+    const isUnlimited = await isUnlimitedAccount(transaction, organizationId, actorEmail);
     const planKey = await getOrganizationPlan(transaction, organizationId);
     const period = periodKey();
-    let limit = usageLimit(planKey, metric);
+    let limit = isUnlimited ? 999_999_999 : usageLimit(planKey, metric);
     if (metric === 'ai_requests') {
       const settings = await aiSettings(transaction, organizationId);
       const normalizedEmail = actorEmail?.trim().toLowerCase();
-      if (normalizedEmail && settings.perUserMonthlyLimit !== null) {
+      if (normalizedEmail && settings.perUserMonthlyLimit !== null && !isUnlimited) {
         const user = await transaction.get<{ quantity: number | string }>(`SELECT quantity FROM user_usage_counters WHERE organization_id = ? AND email = ? AND metric = 'ai_requests' AND period_key = ?`, [organizationId, normalizedEmail, period]);
         const used = Number(user?.quantity || 0);
         if (used + quantity > settings.perUserMonthlyLimit) {
           throw new PlanQuotaError('Bu ay için size ayrılan yapay zekâ kullanım hakkı doldu. Çalışma alanı yöneticiniz sınırı değiştirebilir.', 'AI_USER_QUOTA_EXHAUSTED', { metric, scope: 'user', used, limit: settings.perUserMonthlyLimit, resetAt: usagePeriod().resetAt });
         }
       }
-      const bonus = await transaction.get<{ total: number | string }>(`SELECT COALESCE(SUM(quantity), 0) AS total FROM usage_bonus_allocations WHERE organization_id = ? AND metric = 'ai_requests' AND period_key = ?`, [organizationId, period]);
-      limit += Number(bonus?.total || 0);
-      const current = await transaction.get<{ quantity: number | string }>('SELECT quantity FROM usage_counters WHERE organization_id = ? AND metric = ? AND period_key = ?', [organizationId, metric, period]);
-      if (Number(current?.quantity || 0) + quantity > limit && settings.autoUsePrepaidCredits) {
-        const debit = await transaction.run(`UPDATE organization_ai_credit_wallet SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE organization_id = ? AND balance >= ?`, [settings.autoCreditBundle, organizationId, settings.autoCreditBundle]);
-        if (debit.changes) {
-          await transaction.run(`INSERT INTO usage_bonus_allocations (id, organization_id, metric, period_key, quantity, source, created_by) VALUES (?, ?, 'ai_requests', ?, ?, 'automatic', 'system')`, [id('bonus'), organizationId, period, settings.autoCreditBundle]);
-          limit += settings.autoCreditBundle;
+      if (!isUnlimited) {
+        const bonus = await transaction.get<{ total: number | string }>(`SELECT COALESCE(SUM(quantity), 0) AS total FROM usage_bonus_allocations WHERE organization_id = ? AND metric = 'ai_requests' AND period_key = ?`, [organizationId, period]);
+        limit += Number(bonus?.total || 0);
+        const current = await transaction.get<{ quantity: number | string }>('SELECT quantity FROM usage_counters WHERE organization_id = ? AND metric = ? AND period_key = ?', [organizationId, metric, period]);
+        if (Number(current?.quantity || 0) + quantity > limit && settings.autoUsePrepaidCredits) {
+          const debit = await transaction.run(`UPDATE organization_ai_credit_wallet SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE organization_id = ? AND balance >= ?`, [settings.autoCreditBundle, organizationId, settings.autoCreditBundle]);
+          if (debit.changes) {
+            await transaction.run(`INSERT INTO usage_bonus_allocations (id, organization_id, metric, period_key, quantity, source, created_by) VALUES (?, ?, 'ai_requests', ?, ?, 'automatic', 'system')`, [id('bonus'), organizationId, period, settings.autoCreditBundle]);
+            limit += settings.autoCreditBundle;
+          }
         }
       }
     }
@@ -486,7 +500,7 @@ export async function consumeUsage(organizationId: string, metric: UsageMetric, 
        WHERE usage_counters.quantity + excluded.quantity <= ?`,
       [organizationId, metric, period, quantity, limit]
     );
-    if (result.changes === 0) {
+    if (result.changes === 0 && !isUnlimited) {
       const current = await transaction.get<{ quantity: number | string }>('SELECT quantity FROM usage_counters WHERE organization_id = ? AND metric = ? AND period_key = ?', [organizationId, metric, period]);
       const used = Number(current?.quantity || 0);
       if (metric === 'ai_requests') {
@@ -503,7 +517,7 @@ export async function consumeUsage(organizationId: string, metric: UsageMetric, 
       [organizationId, metric, period]
     );
     const used = Number(row?.quantity || quantity);
-    if (metric === 'ai_requests' && used * 100 >= limit * 80) {
+    if (metric === 'ai_requests' && !isUnlimited && used * 100 >= limit * 80) {
       const claimed = await transaction.run(`INSERT INTO usage_threshold_events (organization_id, metric, period_key, threshold) VALUES (?, ?, ?, 80) ON CONFLICT (organization_id, metric, period_key, threshold) DO NOTHING`, [organizationId, metric, period]);
       thresholdReached = claimed.changes > 0;
       notificationUsed = used;

@@ -168,7 +168,7 @@ router.get('/forecast', async (req: AuthenticatedRequest, res: Response, next: N
     const organizationId = req.organization!.organization_id;
     const dataset = await getCombinedUserDataset(organizationId);
     if (!dataset) return res.status(404).json({ error: { code: 'NO_DATASET', message: 'Önce veri yükleyin.' } });
-    await consumeUsage(organizationId, 'ml_runs');
+    await consumeUsage(organizationId, 'ml_runs', 1, req.user!.email);
     res.json(buildMlForecast(dataset.file_content, dataset.filename));
   } catch (err) {
     if (err instanceof PlanQuotaError) return res.status(429).json({ error: { code: err.code, message: err.message } });
@@ -181,7 +181,7 @@ router.get('/insights', async (req: AuthenticatedRequest, res: Response, next: N
     const organizationId = req.organization!.organization_id;
     const dataset = await getCombinedUserDataset(organizationId);
     if (!dataset) return res.status(404).json({ error: { code: 'NO_DATASET', message: 'Önce veri yükleyin.' } });
-    await consumeUsage(organizationId, 'ml_runs');
+    await consumeUsage(organizationId, 'ml_runs', 1, req.user!.email);
     res.json(buildMlInsights(dataset.file_content, dataset.filename));
   } catch (err) {
     if (err instanceof PlanQuotaError) return res.status(429).json({ error: { code: err.code, message: err.message } });
@@ -201,7 +201,7 @@ router.post('/analyze', async (req: AuthenticatedRequest, res: Response, next: N
       return res.status(400).json({ error: { code: 'TARGET_COLUMN_NOT_FOUND', message: 'Seçilen hedef kolon analiz kapsamındaki veride bulunamadı.' } });
     }
     const analysisBody = { target_column: targetColumn, periods };
-    await consumeUsage(organizationId, 'ml_runs');
+    await consumeUsage(organizationId, 'ml_runs', 1, req.user!.email);
 
     const threshold = Number(process.env.ML_ANALYZE_ASYNC_THRESHOLD_CHARS || 0);
     const requestedAsync = req.body?.async === true || req.query.async === '1';

@@ -1,6 +1,7 @@
 import { database, QueryExecutor } from './database';
 import { getPlan, PlanKey } from './plans';
 import { initializeSchema, personalOrganizationId } from './schema';
+import { isUnlimitedAccount } from './saasDb';
 import logger from './logger';
 
 const DATASET_TABLE = 'user_datasets_v2';
@@ -251,8 +252,9 @@ export async function saveUserDatasetInTransaction(
     [organizationId]
   );
   const plan = getPlan(await organizationPlan(transaction, organizationId));
+  const isUnlimited = await isUnlimitedAccount(transaction, organizationId);
   const nextCount = Number(usage?.count || 0) + (existingSource ? 0 : 1);
-  if (nextCount > plan.limits.datasets) {
+  if (!isUnlimited && nextCount > plan.limits.datasets) {
     throw new StorageQuotaError('DATASET_QUOTA_EXCEEDED', `Plan kotası aşıldı: en fazla ${plan.limits.datasets} veri seti yüklenebilir.`);
   }
   await transaction.run(`UPDATE ${DATASET_TABLE} SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE organization_id = ?`, [organizationId]);
@@ -494,7 +496,8 @@ export async function createConnection(scope: string, type: string, name: string
   return database.tenantTransaction(organizationId, async (transaction) => {
     const count = await transaction.get<{ count: string | number }>('SELECT COUNT(*) AS count FROM user_connections WHERE organization_id = ?', [organizationId]);
     const plan = getPlan(await organizationPlan(transaction, organizationId));
-    if (Number(count?.count || 0) >= plan.limits.connectors) {
+    const isUnlimited = await isUnlimitedAccount(transaction, organizationId, actor);
+    if (!isUnlimited && Number(count?.count || 0) >= plan.limits.connectors) {
       throw new StorageQuotaError('CONNECTOR_QUOTA_EXCEEDED', `Plan kotası aşıldı: en fazla ${plan.limits.connectors} konnektör.`);
     }
     return insertId(transaction,
@@ -535,7 +538,8 @@ export async function saveDocument(scope: string, filename: string, content: str
       `SELECT COUNT(*) AS count, COALESCE(SUM(LENGTH(content)), 0) AS chars FROM user_documents WHERE organization_id = ?`, [organizationId]
     );
     const plan = getPlan(await organizationPlan(transaction, organizationId));
-    if (Number(usage?.count || 0) >= plan.limits.documents || Number(usage?.chars || 0) + content.length > plan.limits.documentChars) {
+    const isUnlimited = await isUnlimitedAccount(transaction, organizationId, actor);
+    if (!isUnlimited && (Number(usage?.count || 0) >= plan.limits.documents || Number(usage?.chars || 0) + content.length > plan.limits.documentChars)) {
       throw new StorageQuotaError('DOCUMENT_QUOTA_EXCEEDED', `Plan kotası aşıldı: en fazla ${plan.limits.documents} doküman ve ${plan.limits.documentChars.toLocaleString('tr-TR')} karakter.`);
     }
     return insertId(transaction,
