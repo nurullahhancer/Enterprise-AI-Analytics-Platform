@@ -22,7 +22,7 @@ import {
   Send
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
 import { User } from '../types';
 
 interface EnterpriseSuiteProps {
@@ -144,7 +144,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     try {
       const headers = authHeaders();
       if (activeTab === 'connectors') {
-        const response = await fetch(getApiUrl('/api/enterprise/connections'), { headers });
+        const response = await apiFetch(getApiUrl('/api/enterprise/connections'), { headers });
         if (!response.ok) throw new Error(await apiErrorMessage(response, 'REST API bağlantıları yüklenemedi.'));
         const items = await response.json() as EnterpriseConnection[];
         setConnections(items);
@@ -153,19 +153,19 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
           current[item.id] || item.schedule_interval_minutes || 60
         ])));
       } else if (activeTab === 'rag') {
-        const response = await fetch(getApiUrl('/api/enterprise/documents'), { headers });
+        const response = await apiFetch(getApiUrl('/api/enterprise/documents'), { headers });
         if (!response.ok) throw new Error(await apiErrorMessage(response, 'Dokümanlar yüklenemedi.'));
         setDocuments(await response.json());
       } else if (activeTab === 'audit') {
-        const response = await fetch(getApiUrl('/api/enterprise/audit-logs'), { headers });
+        const response = await apiFetch(getApiUrl('/api/enterprise/audit-logs'), { headers });
         if (!response.ok) throw new Error(await apiErrorMessage(response, 'Denetim kayıtları yüklenemedi.'));
         setAuditLogs(await response.json());
       } else if (activeTab === 'notifications') {
-        const response = await fetch(getApiUrl('/api/enterprise/notification-settings'), { headers });
+        const response = await apiFetch(getApiUrl('/api/enterprise/notification-settings'), { headers });
         if (!response.ok) throw new Error(await apiErrorMessage(response, 'Bildirim ayarları yüklenemedi.'));
         setNotificationSettings(await response.json());
       } else if (activeTab === 'governance') {
-        const response = await fetch(getApiUrl('/api/enterprise/data-governance'), { headers });
+        const response = await apiFetch(getApiUrl('/api/enterprise/data-governance'), { headers });
         if (!response.ok) throw new Error(await apiErrorMessage(response, 'Veri yönetişimi ayarları yüklenemedi.'));
         setRetentionPolicy(await response.json());
       }
@@ -213,7 +213,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     }
 
     try {
-      const res = await fetch(getApiUrl('/api/enterprise/connections'), {
+      const res = await apiFetch(getApiUrl('/api/enterprise/connections'), {
         method: 'POST',
         headers: { ...jsonHeaders(), ...authHeaders() },
         body: JSON.stringify({ name: newConnName.trim(), type: newConnType, config })
@@ -236,7 +236,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     if (!isAdmin) return;
     if (isViewer) return;
     try {
-      const response = await fetch(getApiUrl(`/api/enterprise/connections/${id}`), {
+      const response = await apiFetch(getApiUrl(`/api/enterprise/connections/${id}`), {
         method: 'DELETE',
         headers: authHeaders()
       });
@@ -249,7 +249,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
   };
 
   const loadSyncHistory = async (connectionId: number) => {
-    const response = await fetch(getApiUrl(`/api/enterprise/connections/${connectionId}/sync-runs?limit=10`), { headers: authHeaders() });
+    const response = await apiFetch(getApiUrl(`/api/enterprise/connections/${connectionId}/sync-runs?limit=10`), { headers: authHeaders() });
     if (!response.ok) throw new Error(await apiErrorMessage(response, 'Eşitleme geçmişi yüklenemedi.'));
     const payload = await response.json() as { items: ConnectorSyncRun[] };
     setSyncRuns((current) => ({ ...current, [connectionId]: payload.items }));
@@ -261,7 +261,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setBusyConnectionId(id);
     try {
       setConnMessage({ type: 'success', text: 'Veri çekme işlemi başlatıldı, lütfen bekleyin...' });
-      const res = await fetch(getApiUrl(`/api/enterprise/connections/${id}/ingest`), {
+      const res = await apiFetch(getApiUrl(`/api/enterprise/connections/${id}/ingest`), {
         method: 'POST',
         headers: authHeaders()
       });
@@ -293,7 +293,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setConnMessage(null);
     try {
       const intervalMinutes = scheduleDrafts[connection.id] || connection.schedule_interval_minutes || 60;
-      const response = await fetch(getApiUrl(`/api/enterprise/connections/${connection.id}/schedule`), {
+      const response = await apiFetch(getApiUrl(`/api/enterprise/connections/${connection.id}/schedule`), {
         method: 'PATCH',
         headers: { ...jsonHeaders(), ...authHeaders() },
         body: JSON.stringify({ enabled: !Boolean(connection.schedule_enabled), intervalMinutes })
@@ -337,7 +337,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     formData.append('file', file);
 
     try {
-      const res = await fetch(getApiUrl('/api/enterprise/documents'), {
+      const res = await apiFetch(getApiUrl('/api/enterprise/documents'), {
         method: 'POST',
         headers: authHeaders(),
         body: formData
@@ -359,7 +359,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     if (!isAdmin) return;
     if (isViewer) return;
     try {
-      const response = await fetch(getApiUrl(`/api/enterprise/documents/${id}`), {
+      const response = await apiFetch(getApiUrl(`/api/enterprise/documents/${id}`), {
         method: 'DELETE',
         headers: authHeaders()
       });
@@ -378,7 +378,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setEtlMessage(null);
 
     try {
-      const res = await fetch(getApiUrl('/api/enterprise/etl/run'), {
+      const res = await apiFetch(getApiUrl('/api/enterprise/etl/run'), {
         method: 'POST',
         headers: { ...jsonHeaders(), ...authHeaders() },
         body: JSON.stringify({ operations: etlOps })
@@ -405,7 +405,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setNotificationBusy(true);
     setNotificationMessage(null);
     try {
-      const response = await fetch(getApiUrl('/api/enterprise/notification-settings'), {
+      const response = await apiFetch(getApiUrl('/api/enterprise/notification-settings'), {
         method: 'PUT',
         headers: { ...jsonHeaders(), ...authHeaders() },
         body: JSON.stringify({
@@ -435,7 +435,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setNotificationBusy(true);
     setNotificationMessage(null);
     try {
-      const response = await fetch(getApiUrl('/api/enterprise/notification-settings/test'), { method: 'POST', headers: authHeaders() });
+      const response = await apiFetch(getApiUrl('/api/enterprise/notification-settings/test'), { method: 'POST', headers: authHeaders() });
       if (!response.ok) throw new Error(await apiErrorMessage(response, 'Test bildirimi gönderilemedi.'));
       setNotificationMessage({ type: 'success', text: 'Test bildirimi etkin kanallara gönderildi.' });
     } catch (error) {
@@ -449,7 +449,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setGovernanceBusy(true);
     setGovernanceMessage(null);
     try {
-      const response = await fetch(getApiUrl('/api/enterprise/data-governance'), {
+      const response = await apiFetch(getApiUrl('/api/enterprise/data-governance'), {
         method: 'PUT', headers: { ...jsonHeaders(), ...authHeaders() }, body: JSON.stringify(retentionPolicy)
       });
       if (!response.ok) throw new Error(await apiErrorMessage(response, 'Saklama politikası kaydedilemedi.'));
@@ -465,7 +465,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setGovernanceBusy(true);
     setGovernanceMessage(null);
     try {
-      const response = await fetch(getApiUrl('/api/enterprise/data-governance/apply'), { method: 'POST', headers: authHeaders() });
+      const response = await apiFetch(getApiUrl('/api/enterprise/data-governance/apply'), { method: 'POST', headers: authHeaders() });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error?.message || 'Saklama politikası uygulanamadı.');
       const total = Object.values(payload.deleted || {}).reduce((sum: number, value) => sum + Number(value || 0), 0);
@@ -480,7 +480,7 @@ export default function EnterpriseSuite({ user }: EnterpriseSuiteProps) {
     setGovernanceBusy(true);
     setGovernanceMessage(null);
     try {
-      const response = await fetch(getApiUrl('/api/enterprise/data-governance/export'), { headers: authHeaders() });
+      const response = await apiFetch(getApiUrl('/api/enterprise/data-governance/export'), { headers: authHeaders() });
       if (!response.ok) throw new Error(await apiErrorMessage(response, 'Kurum verisi dışa aktarılamadı.'));
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);

@@ -9,7 +9,7 @@ import Settings from './views/Settings';
 import EnterpriseSuite from './views/EnterpriseSuite';
 import SaaSManagement, { SaaSOrganization } from './views/SaaSManagement';
 import DecisionCenter from './views/DecisionCenter';
-import { authHeaders, getApiUrl } from './lib/api';
+import { apiFetch, authHeaders, clearAuthTokens, getApiUrl } from './lib/api';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -61,16 +61,16 @@ export default function App() {
     setIsSessionLoading(true);
     setSessionError('');
     try {
-      let response = await fetch(getApiUrl('/api/me'), { headers: authHeaders() });
+      let response = await apiFetch(getApiUrl('/api/me'), { headers: authHeaders() });
       if (response.status === 403) {
         const errorBody = await response.clone().json().catch(() => null);
         if (errorBody?.error?.code === 'ORGANIZATION_ACCESS_DENIED') {
           localStorage.removeItem('reai_organization_id');
-          response = await fetch(getApiUrl('/api/me'), { headers: authHeaders() });
+          response = await apiFetch(getApiUrl('/api/me'), { headers: authHeaders() });
         }
       }
       if (response.status === 401 || response.status === 403) {
-        localStorage.removeItem('reai_token');
+        clearAuthTokens();
         setUser(null);
         setOrganizations([]);
         return;
@@ -79,7 +79,7 @@ export default function App() {
 
       const data = await response.json();
       if (!data?.user?.email) {
-        localStorage.removeItem('reai_token');
+        clearAuthTokens();
         setUser(null);
         return;
       }
@@ -123,11 +123,11 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    void fetch(getApiUrl('/api/logout'), {
+    void apiFetch(getApiUrl('/api/logout'), {
       method: 'POST',
       headers: authHeaders()
     }).catch(() => undefined);
-    localStorage.removeItem('reai_token');
+    clearAuthTokens();
     localStorage.removeItem('reai_organization_id');
     setUser(null);
     setOrganizations([]);
@@ -175,7 +175,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
-                localStorage.removeItem('reai_token');
+                clearAuthTokens();
                 setSessionError('');
               }}
               className="flex-1 rounded-xl border border-white/15 px-4 py-3 text-xs font-bold uppercase tracking-wider text-white"

@@ -23,7 +23,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
 import { cn } from '../lib/utils';
 
 export type SaaSRole = 'admin' | 'analyst' | 'viewer';
@@ -223,11 +223,11 @@ const subscriptionStatusLabel = (value: unknown): string => {
   const status = String(value || '').trim().toLowerCase();
   const labels: Record<string, string> = {
     active: 'Ödeme aktif',
-    trialing: 'Deneme sürümü',
+    trial: 'Deneme sürümü',
     pending: 'Ödeme onayı bekleniyor',
-    unpaid: 'Ödeme bekleniyor',
-    canceled: 'İptal edildi',
+    past_due: 'Ödeme gecikmiş',
     cancelled: 'İptal edildi',
+    expired: 'Süresi doldu',
     included: 'Ücretsiz kullanım',
     inactive: 'Etkin abonelik yok',
   };
@@ -415,7 +415,7 @@ const scopedUrl = (path: string, organizationId: string): string => {
 };
 
 const apiRequest = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
-  const response = await fetch(getApiUrl(path), {
+  const response = await apiFetch(getApiUrl(path), {
     ...init,
     headers: {
       ...(init.body ? jsonHeaders() : {}),

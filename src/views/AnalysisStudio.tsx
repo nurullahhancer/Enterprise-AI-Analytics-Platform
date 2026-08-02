@@ -25,7 +25,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
 import { cn } from '../lib/utils';
 import MarkdownContent from '../components/MarkdownContent';
 
@@ -523,7 +523,7 @@ export default function AnalysisStudio({
     const url = resolveStatusUrl(statusUrl);
 
     while (Date.now() < deadline) {
-      const response = await fetch(url, { headers: authHeaders(), signal });
+      const response = await apiFetch(url, { headers: authHeaders(), signal });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(payload, 'ML işinin durumu alınamadı.'));
       if (!isRecord(payload)) throw new Error('ML işi geçersiz bir durum yanıtı döndürdü.');
@@ -563,7 +563,7 @@ export default function AnalysisStudio({
     setActionNotice(null);
 
     try {
-      const response = await fetch(getApiUrl('/api/ml/analyze'), {
+      const response = await apiFetch(getApiUrl('/api/ml/analyze'), {
         method: 'POST',
         headers: { ...jsonHeaders(), ...authHeaders() },
         body: JSON.stringify({ target_column: targetColumn, periods }),
@@ -601,7 +601,7 @@ export default function AnalysisStudio({
     setIsInterpreting(true);
     setActionNotice(null);
     try {
-      const response = await fetch(getApiUrl(`/api/ml/analyses/${encodeURIComponent(result.analysisRunId)}/interpret`), {
+      const response = await apiFetch(getApiUrl(`/api/ml/analyses/${encodeURIComponent(result.analysisRunId)}/interpret`), {
         method: 'POST',
         headers: { ...jsonHeaders(), ...authHeaders() },
         body: JSON.stringify({ refresh: true }),
@@ -629,7 +629,7 @@ export default function AnalysisStudio({
     setIsDownloading(true);
     setActionNotice(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         getApiUrl(`/reports/download?type=analysis&analysisId=${encodeURIComponent(result.analysisRunId)}`),
         { headers: authHeaders() },
       );

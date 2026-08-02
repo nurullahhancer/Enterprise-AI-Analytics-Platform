@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { ViewState, User, OrganizationMembership } from '../types';
 import { cn } from '../lib/utils';
-import { authHeaders, getApiUrl } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl } from '../lib/api';
 import { getApkDownloadUrl, shouldShowApkDownload } from '../lib/downloads';
 
 interface SidebarProps {
@@ -77,7 +77,7 @@ export default function Sidebar({
 
   const fetchNotifications = async () => {
     try {
-      const res = await fetch(getApiUrl('/api/enterprise/notifications'), { headers: authHeaders() });
+      const res = await apiFetch(getApiUrl('/api/enterprise/notifications'), { headers: authHeaders() });
       if (res.ok) setNotifications(await res.json());
     } catch (err) {
       console.error(err);
@@ -99,7 +99,7 @@ export default function Sidebar({
 
   const handleMarkRead = async () => {
     try {
-      await fetch(getApiUrl('/api/enterprise/notifications/read'), { method: 'POST', headers: authHeaders() });
+      await apiFetch(getApiUrl('/api/enterprise/notifications/read'), { method: 'POST', headers: authHeaders() });
       fetchNotifications();
     } catch (err) {
       console.error(err);

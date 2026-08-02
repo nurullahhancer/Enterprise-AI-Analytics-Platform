@@ -19,7 +19,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
 import { cn } from '../lib/utils';
 import type { User } from '../types';
 
@@ -358,8 +358,8 @@ export default function DecisionCenter({ user }: DecisionCenterProps) {
     if (mountedRef.current) setLoadError('');
     try {
       const [columnsResponse, kpisResponse] = await Promise.all([
-        fetch(getApiUrl('/api/kpis/columns'), { headers: requestHeaders(), signal }),
-        fetch(getApiUrl('/api/kpis'), { headers: requestHeaders(), signal }),
+        apiFetch(getApiUrl('/api/kpis/columns'), { headers: requestHeaders(), signal }),
+        apiFetch(getApiUrl('/api/kpis'), { headers: requestHeaders(), signal }),
       ]);
       if (!columnsResponse.ok) {
         throw new Error(await apiErrorMessage(columnsResponse, 'KPI kolonları yüklenemedi.'));
@@ -399,7 +399,7 @@ export default function DecisionCenter({ user }: DecisionCenterProps) {
       setHistoryError('');
     }
     try {
-      const response = await fetch(getApiUrl(`/api/kpis/${encodeURIComponent(kpiId)}/history`), {
+      const response = await apiFetch(getApiUrl(`/api/kpis/${encodeURIComponent(kpiId)}/history`), {
         headers: requestHeaders(),
         signal,
       });
@@ -517,7 +517,7 @@ export default function DecisionCenter({ user }: DecisionCenterProps) {
     setNotice(null);
     const thresholdValue = form.thresholdType === 'none' ? null : Number(form.thresholdValue);
     try {
-      const response = await fetch(getApiUrl(editingId ? `/api/kpis/${encodeURIComponent(editingId)}` : '/api/kpis'), {
+      const response = await apiFetch(getApiUrl(editingId ? `/api/kpis/${encodeURIComponent(editingId)}` : '/api/kpis'), {
         method: editingId ? 'PATCH' : 'POST',
         headers: requestHeaders(true),
         signal: controller.signal,
@@ -556,7 +556,7 @@ export default function DecisionCenter({ user }: DecisionCenterProps) {
     setEvaluatingKey(key);
     setNotice(null);
     try {
-      const response = await fetch(getApiUrl('/api/kpis/evaluate'), {
+      const response = await apiFetch(getApiUrl('/api/kpis/evaluate'), {
         method: 'POST',
         headers: requestHeaders(true),
         signal: controller.signal,
@@ -585,7 +585,7 @@ export default function DecisionCenter({ user }: DecisionCenterProps) {
     setDeletingId(kpi.id);
     setNotice(null);
     try {
-      const response = await fetch(getApiUrl(`/api/kpis/${encodeURIComponent(kpi.id)}`), {
+      const response = await apiFetch(getApiUrl(`/api/kpis/${encodeURIComponent(kpi.id)}`), {
         method: 'DELETE',
         headers: requestHeaders(),
         signal: controller.signal,

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User as UserIcon, Sparkles, AlertTriangle, CreditCard } from 'lucide-react';
 import { ChatMessage } from '../types';
 import { cn } from '../lib/utils';
-import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
 import MarkdownContent from '../components/MarkdownContent';
 
 interface QuotaDetails { resetAt?: string; used?: number; limit?: number; scope?: string }
@@ -66,7 +66,7 @@ export default function AIChat({
     setIsLoading(true);
 
     try {
-      const res = await fetch(getApiUrl('/api/chat'), {
+      const res = await apiFetch(getApiUrl('/api/chat'), {
         method: 'POST',
         headers: {
           ...jsonHeaders(),

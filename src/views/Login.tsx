@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Building2, Download, LogIn, Lock, Mail, User as UserIcon } from 'lucide-react';
 import { User } from '../types';
-import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl, jsonHeaders, storeAuthTokens } from '../lib/api';
 import { getApkDownloadUrl, shouldShowApkDownload } from '../lib/downloads';
 
 interface LoginProps {
@@ -25,7 +25,7 @@ export default function Login({ onLogin }: LoginProps) {
   const showApkDownload = shouldShowApkDownload();
 
   useEffect(() => {
-    fetch(getApiUrl('/api/config'))
+    apiFetch(getApiUrl('/api/config'))
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((config) => setRegistrationEnabled(config.registrationEnabled === true))
       .catch(() => setRegistrationEnabled(false));
@@ -36,7 +36,7 @@ export default function Login({ onLogin }: LoginProps) {
     const passwordReset = params.get('resetPassword') || '';
     if (invitation) {
       setInvitationToken(invitation);
-      fetch(getApiUrl(`/api/invitation/preview?token=${encodeURIComponent(invitation)}`))
+      apiFetch(getApiUrl(`/api/invitation/preview?token=${encodeURIComponent(invitation)}`))
         .then((response) => response.ok ? response.json() : Promise.reject())
         .then((data) => {
           setEmail(String(data.invitation?.email || ''));
@@ -47,7 +47,7 @@ export default function Login({ onLogin }: LoginProps) {
         .catch(() => setErrorMsg('Davet bağlantısı geçersiz veya süresi dolmuş.'));
     }
     if (verification) {
-      fetch(getApiUrl('/api/verify-email'), {
+      apiFetch(getApiUrl('/api/verify-email'), {
         method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ token: verification })
       })
         .then(async (response) => ({ ok: response.ok, data: await response.json() }))
@@ -68,7 +68,7 @@ export default function Login({ onLogin }: LoginProps) {
     
     try {
       if (resetToken) {
-        const response = await fetch(getApiUrl('/api/reset-password'), {
+        const response = await apiFetch(getApiUrl('/api/reset-password'), {
           method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ token: resetToken, password })
         });
         const data = await response.json();
@@ -80,7 +80,7 @@ export default function Login({ onLogin }: LoginProps) {
           window.history.replaceState({}, '', window.location.pathname);
         }
       } else if (forgotMode) {
-        const response = await fetch(getApiUrl('/api/forgot-password'), {
+        const response = await apiFetch(getApiUrl('/api/forgot-password'), {
           method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ email: userEmail })
         });
         const data = await response.json();
@@ -90,7 +90,7 @@ export default function Login({ onLogin }: LoginProps) {
           setForgotMode(false);
         }
       } else if (isRegister) {
-        const response = await fetch(getApiUrl('/api/register'), {
+        const response = await apiFetch(getApiUrl('/api/register'), {
           method: 'POST',
           headers: jsonHeaders(),
           body: JSON.stringify({
@@ -117,7 +117,7 @@ export default function Login({ onLogin }: LoginProps) {
           setErrorMsg(data.error?.message || 'Kayıt sırasında bir hata oluştu.');
         }
       } else {
-        const response = await fetch(getApiUrl('/api/login'), {
+        const response = await apiFetch(getApiUrl('/api/login'), {
           method: 'POST',
           headers: { ...jsonHeaders(), ...(preferredOrganizationId ? { 'X-Organization-Id': preferredOrganizationId } : {}) },
           body: JSON.stringify({ email: userEmail, password }),
@@ -125,12 +125,11 @@ export default function Login({ onLogin }: LoginProps) {
         const data = await response.json();
         
         if (response.ok && data.user) {
-          if (data.token) localStorage.setItem('reai_token', data.token);
-          else localStorage.removeItem('reai_token');
+          storeAuthTokens(data);
           const organizationId = data.organization?.organization_id || data.user?.tenantId;
           if (organizationId) localStorage.setItem('reai_organization_id', organizationId);
           if (invitationToken) {
-            const accepted = await fetch(getApiUrl('/api/saas/invitations/accept'), {
+            const accepted = await apiFetch(getApiUrl('/api/saas/invitations/accept'), {
               method: 'POST',
               headers: { ...jsonHeaders(), ...authHeaders() },
               body: JSON.stringify({ token: invitationToken })

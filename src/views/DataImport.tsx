@@ -17,7 +17,7 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { authHeaders, getApiUrl } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl } from '../lib/api';
 import { cn } from '../lib/utils';
 import { User } from '../types';
 
@@ -112,10 +112,10 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
     try {
       const headers = authHeaders();
       const [datasetResponse, analysisGroupResponse, connectionResponse, documentResponse] = await Promise.all([
-        fetch(getApiUrl('/api/dataset/list'), { headers }),
-        fetch(getApiUrl('/api/dataset/analysis-group'), { headers }),
-        fetch(getApiUrl('/api/enterprise/connections'), { headers }),
-        fetch(getApiUrl('/api/enterprise/documents'), { headers }),
+        apiFetch(getApiUrl('/api/dataset/list'), { headers }),
+        apiFetch(getApiUrl('/api/dataset/analysis-group'), { headers }),
+        apiFetch(getApiUrl('/api/enterprise/connections'), { headers }),
+        apiFetch(getApiUrl('/api/enterprise/documents'), { headers }),
       ]);
 
       if (!datasetResponse.ok) throw new Error('Veri kaynakları yüklenemedi.');
@@ -161,7 +161,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
     formData.append('file', file);
 
     try {
-      const response = await fetch(getApiUrl('/api/upload'), {
+      const response = await apiFetch(getApiUrl('/api/upload'), {
         method: 'POST',
         headers: authHeaders(),
         body: formData,
@@ -186,7 +186,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
     setDeletingId(dataset.id);
     setNotice(null);
     try {
-      const response = await fetch(getApiUrl(`/api/dataset/${dataset.id}`), {
+      const response = await apiFetch(getApiUrl(`/api/dataset/${dataset.id}`), {
         method: 'DELETE',
         headers: authHeaders(),
       });
@@ -206,7 +206,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
     setSyncingId(connection.id);
     setNotice(null);
     try {
-      const response = await fetch(getApiUrl(`/api/enterprise/connections/${connection.id}/ingest`), {
+      const response = await apiFetch(getApiUrl(`/api/enterprise/connections/${connection.id}/ingest`), {
         method: 'POST',
         headers: authHeaders(),
       });
@@ -230,7 +230,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
     setScopingId(dataset.id);
     setNotice(null);
     try {
-      const response = await fetch(getApiUrl(`/api/dataset/${dataset.id}/analysis-scope`), {
+      const response = await apiFetch(getApiUrl(`/api/dataset/${dataset.id}/analysis-scope`), {
         method: 'PATCH',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
@@ -256,7 +256,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
     setFocusingId(dataset.id);
     setNotice(null);
     try {
-      const response = await fetch(getApiUrl(`/api/dataset/${dataset.id}/active`), {
+      const response = await apiFetch(getApiUrl(`/api/dataset/${dataset.id}/active`), {
         method: 'PUT',
         headers: authHeaders(),
       });
@@ -280,10 +280,10 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
       'text/csv': ['.csv'],
       'application/json': ['.json'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-      'application/vnd.ms-excel': ['.xls'],
     },
     multiple: false,
     maxFiles: 1,
+    maxSize: 25 * 1024 * 1024,
     disabled: !canWrite || isUploading,
   });
 
@@ -463,7 +463,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
                   {datasets.map((dataset) => {
                     const fromApi = dataset.source_type === 'rest' || dataset.filename.endsWith('_ingest.csv');
                     const lowerName = dataset.filename.toLowerCase();
-                    const isExcel = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls');
+                    const isExcel = lowerName.endsWith('.xlsx');
                     const sourceLabel = dataset.source_type === 'sql' ? 'SQL' : fromApi ? 'REST' : isExcel ? 'EXCEL' : dataset.source_type === 'json' ? 'JSON' : dataset.source_type === 'etl' ? 'ETL' : 'CSV';
                     const included = Number(dataset.include_in_analysis) === 1;
                     const inCurrentGroup = analysisDatasetIds.has(dataset.id);
@@ -557,7 +557,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
           <aside className="min-w-0">
             <div className="mb-4">
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">Dosya yükle</h2>
-              <p className="mt-1 text-xs text-slate-500 dark:text-white/45">CSV, Excel (XLSX/XLS) veya JSON · dosya boyutu sınırı yok</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-white/45">CSV, Excel (XLSX) veya JSON · en fazla 25 MiB</p>
             </div>
             <div
               {...getRootProps()}

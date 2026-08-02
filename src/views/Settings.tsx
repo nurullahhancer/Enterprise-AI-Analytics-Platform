@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, ShieldAlert, KeyRound, Check, AlertTriangle, UserMinus } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { authHeaders, getApiUrl, jsonHeaders } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl, jsonHeaders, storeAuthTokens } from '../lib/api';
 import { User as UserType } from '../types';
 
 interface SettingsProps {
@@ -49,7 +49,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
     setProfileMessage(null);
 
     try {
-      const res = await fetch(getApiUrl('/api/user'), {
+      const res = await apiFetch(getApiUrl('/api/user'), {
         method: 'PUT',
         headers: {
           ...jsonHeaders(),
@@ -98,7 +98,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
     setPasswordMessage(null);
 
     try {
-      const res = await fetch(getApiUrl('/api/user'), {
+      const res = await apiFetch(getApiUrl('/api/user'), {
         method: 'PUT',
         headers: {
           ...jsonHeaders(),
@@ -114,7 +114,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
       setCurrentPassword('');
       setPassword('');
       setConfirmPassword('');
-      if (data.token) localStorage.setItem('reai_token', data.token);
+      if (data.token) storeAuthTokens(data);
       setPasswordMessage({ type: 'success', text: 'Şifreniz başarıyla güncellendi.' });
     } catch (err: any) {
       setPasswordMessage({ type: 'error', text: err.message });
@@ -132,7 +132,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
     setDeleteError(null);
 
     try {
-      const res = await fetch(getApiUrl('/api/user'), {
+      const res = await apiFetch(getApiUrl('/api/user'), {
         method: 'DELETE',
         headers: {
           ...jsonHeaders(),

@@ -9,7 +9,7 @@ import {
   Hash, KeyRound, Lightbulb, LineChart as LineIcon, PieChart,
   Sparkles, Table2, Tags, TrendingUp, Type as TypeIcon, WalletCards
 } from 'lucide-react';
-import { authHeaders, getApiUrl } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl } from '../lib/api';
 import { downloadReport } from '../lib/reports';
 import { cn } from '../lib/utils';
 import AnalysisStudio from './AnalysisStudio';
@@ -546,7 +546,7 @@ export default function Dashboard() {
 
   const persistDashboardPreference = useCallback(async (order: string[], hidden: string[]) => {
     try {
-      const response = await fetch(getApiUrl('/api/dashboard/preference'), {
+      const response = await apiFetch(getApiUrl('/api/dashboard/preference'), {
         method: 'PUT',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ order, hidden })
@@ -609,7 +609,7 @@ export default function Dashboard() {
     setDashboardError('');
     setAutoInsights(null);
     try {
-      const res = await fetch(getApiUrl('/api/dashboard/dynamic'), { headers: authHeaders() });
+      const res = await apiFetch(getApiUrl('/api/dashboard/dynamic'), { headers: authHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || 'Dashboard hazırlanamadı.');
       setDashboard(data);
@@ -632,7 +632,7 @@ export default function Dashboard() {
     if (!hasDataset) { setReportStatus('Otomatik içgörü almak için önce veri yükleyin.'); return; }
     setIsInsightLoading(true);
     try {
-      const res = await fetch(getApiUrl('/api/insights/auto'), { headers: authHeaders() });
+      const res = await apiFetch(getApiUrl('/api/insights/auto'), { headers: authHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || 'Otomatik içgörü üretilemedi.');
       setAutoInsights(data);

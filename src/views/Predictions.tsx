@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { authHeaders, getApiUrl } from '../lib/api';
+import { apiFetch, authHeaders, getApiUrl } from '../lib/api';
 
 interface MlForecast {
   filename: string;
@@ -37,7 +37,7 @@ export default function Predictions() {
   useEffect(() => {
     const loadForecast = async () => {
       try {
-        const response = await fetch(getApiUrl('/api/ml/forecast'), { headers: authHeaders() });
+        const response = await apiFetch(getApiUrl('/api/ml/forecast'), { headers: authHeaders() });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error?.message || 'Tahmin alınamadı.');
         setForecast(data);

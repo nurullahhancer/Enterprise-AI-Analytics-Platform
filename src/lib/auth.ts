@@ -93,6 +93,10 @@ export function passwordHashNeedsUpgrade(storedHash: string): boolean {
 export function generateToken(email: string, tokenVersion: number): string {
   const secret = getJwtSecret();
   if (!secret) throw new AuthConfigurationError();
+  const configuredTtl = Number(process.env.JWT_ACCESS_TTL_SECONDS || 1_800);
+  const accessTtlSeconds = Number.isFinite(configuredTtl)
+    ? Math.max(300, Math.min(configuredTtl, 3_600))
+    : 1_800;
   return jwt.sign(
     { email, tokenVersion },
     secret,
@@ -102,7 +106,7 @@ export function generateToken(email: string, tokenVersion: number): string {
       issuer: JWT_ISSUER,
       subject: email,
       jwtid: crypto.randomUUID(),
-      expiresIn: '8h'
+      expiresIn: accessTtlSeconds
     }
   );
 }
