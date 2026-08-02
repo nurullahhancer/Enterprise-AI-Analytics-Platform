@@ -13,6 +13,12 @@ export interface AiResponse {
   text: string;
   provider: AiProviderName;
   model: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    costMicroUsd: number;
+    estimated: boolean;
+  };
 }
 
 export class AiProviderError extends Error {
@@ -51,9 +57,71 @@ function boundedInteger(value: string | undefined, fallback: number, min: number
   return Math.max(min, Math.min(parsed, max));
 }
 
+function tokenCount(value: unknown, fallbackText: string): { value: number; estimated: boolean } {
+  const parsed = Number(value);
+  if (Number.isSafeInteger(parsed) && parsed >= 0) return { value: parsed, estimated: false };
+  return { value: Math.max(1, Math.ceil(fallbackText.length / 4)), estimated: true };
+}
+
+function pricePerMillion(name: string): number {
+  const parsed = Number(process.env[name] || 0);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1_000 ? parsed : 0;
+}
+
+function usageFor(prompt: string, text: string, input: unknown, output: unknown): AiResponse['usage'] {
+  const inputTokens = tokenCount(input, prompt);
+  const outputTokens = tokenCount(output, text);
+  const costMicroUsd = Math.round(
+    inputTokens.value * pricePerMillion('AI_INPUT_COST_PER_MILLION_USD')
+    + outputTokens.value * pricePerMillion('AI_OUTPUT_COST_PER_MILLION_USD')
+  );
+  return {
+    inputTokens: inputTokens.value,
+    outputTokens: outputTokens.value,
+    costMicroUsd,
+    estimated: inputTokens.estimated || outputTokens.estimated
+  };
+}
+
+function normalizeProviderError(error: unknown): AiProviderError {
+  if (error instanceof AiProviderError) return error;
+  if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+    return new AiProviderError(504, 'AI_PROVIDER_TIMEOUT', 'AI sağlayıcı zaman aşımına uğradı.');
+  }
+  return new AiProviderError(502, 'AI_PROVIDER_UNAVAILABLE', 'AI sağlayıcıya ulaşılamadı.');
+}
+
+function retryable(error: AiProviderError): boolean {
+  return error.status === 429 || error.status === 502 || error.status === 504;
+}
+
+async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+  const retries = boundedInteger(process.env.AI_MAX_RETRIES, 2, 0, 3);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (rawError) {
+      const error = normalizeProviderError(rawError);
+      if (attempt >= retries || !retryable(error)) throw error;
+      const providerDelay = Number(error.retryAfter);
+      const delayMs = Number.isFinite(providerDelay)
+        ? Math.min(Math.max(providerDelay * 1_000, 250), 5_000)
+        : Math.min(250 * (2 ** attempt), 2_000);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 function modelFor(provider: AiProviderName): string {
   if (provider === 'nvidia') return process.env.NVIDIA_AI_MODEL || DEFAULT_NVIDIA_MODEL;
   return process.env.GEMINI_AI_MODEL || DEFAULT_GEMINI_MODEL;
+}
+
+function geminiClient(): GoogleGenAI {
+  return new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY!,
+    httpOptions: { timeout: boundedInteger(process.env.AI_REQUEST_TIMEOUT_MS, 30_000, 5_000, 300_000) }
+  });
 }
 
 export function getAiConfiguration(): AiConfiguration {
@@ -77,14 +145,13 @@ export async function generateAiResponse(prompt: string): Promise<AiResponse> {
     throw new AiProviderError(503, 'AI_NOT_CONFIGURED', 'AI servis anahtarı yapılandırılmadı.');
   }
 
-  if (config.provider === 'nvidia') {
-    return generateNvidiaResponse(prompt, config.model);
-  }
-  return generateGeminiResponse(prompt, config.model);
+  return withRetry(() => config.provider === 'nvidia'
+    ? generateNvidiaResponse(prompt, config.model)
+    : generateGeminiResponse(prompt, config.model));
 }
 
 async function generateGeminiResponse(prompt: string, model: string): Promise<AiResponse> {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+  const ai = geminiClient();
   const response = await ai.models.generateContent({
     model,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -96,7 +163,13 @@ async function generateGeminiResponse(prompt: string, model: string): Promise<Ai
   if (!response.text) {
     throw new AiProviderError(502, 'AI_EMPTY_RESPONSE', 'AI servisinden boş yanıt alındı.');
   }
-  return { text: response.text, provider: 'gemini', model };
+  const metadata = (response as unknown as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }).usageMetadata;
+  return {
+    text: response.text,
+    provider: 'gemini',
+    model,
+    usage: usageFor(prompt, response.text, metadata?.promptTokenCount, metadata?.candidatesTokenCount)
+  };
 }
 
 async function generateNvidiaResponse(prompt: string, model: string): Promise<AiResponse> {
@@ -145,12 +218,18 @@ async function generateNvidiaResponse(prompt: string, model: string): Promise<Ai
 
     const body = await response.json() as {
       choices?: Array<{ message?: { content?: unknown }, delta?: { content?: unknown } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     const text = body.choices?.[0]?.message?.content ?? body.choices?.[0]?.delta?.content;
     if (typeof text !== 'string' || !text.trim()) {
       throw new AiProviderError(502, 'AI_EMPTY_RESPONSE', 'AI servisinden boş yanıt alındı.');
     }
-    return { text, provider: 'nvidia', model };
+    return {
+      text,
+      provider: 'nvidia',
+      model,
+      usage: usageFor(prompt, text, body.usage?.prompt_tokens, body.usage?.completion_tokens)
+    };
   } catch (error) {
     if (error instanceof AiProviderError) throw error;
     if (error instanceof Error && error.name === 'AbortError') {
@@ -168,14 +247,15 @@ export async function generateAiResponseStream(prompt: string, onChunk: (text: s
     throw new AiProviderError(503, 'AI_NOT_CONFIGURED', 'AI servis anahtarı yapılandırılmadı.');
   }
 
-  if (config.provider === 'nvidia') {
-    return generateNvidiaResponseStream(prompt, config.model, onChunk);
-  }
-  return generateGeminiResponseStream(prompt, config.model, onChunk);
+  const response = await withRetry(() => config.provider === 'nvidia'
+    ? generateNvidiaResponseStream(prompt, config.model, () => undefined)
+    : generateGeminiResponseStream(prompt, config.model, () => undefined));
+  onChunk(response.text);
+  return response;
 }
 
 async function generateGeminiResponseStream(prompt: string, model: string, onChunk: (text: string) => void): Promise<AiResponse> {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+  const ai = geminiClient();
   const responseStream = await ai.models.generateContentStream({
     model,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -193,7 +273,7 @@ async function generateGeminiResponseStream(prompt: string, model: string, onChu
   if (!text) {
     throw new AiProviderError(502, 'AI_EMPTY_RESPONSE', 'AI servisinden boş yanıt alındı.');
   }
-  return { text, provider: 'gemini', model };
+  return { text, provider: 'gemini', model, usage: usageFor(prompt, text, undefined, undefined) };
 }
 
 async function generateNvidiaResponseStream(prompt: string, model: string, onChunk: (text: string) => void): Promise<AiResponse> {
@@ -273,7 +353,7 @@ async function generateNvidiaResponseStream(prompt: string, model: string, onChu
     if (!text.trim()) {
       throw new AiProviderError(502, 'AI_EMPTY_RESPONSE', 'AI servisinden boş yanıt alındı.');
     }
-    return { text, provider: 'nvidia', model };
+    return { text, provider: 'nvidia', model, usage: usageFor(prompt, text, undefined, undefined) };
   } catch (error) {
     if (error instanceof AiProviderError) throw error;
     if (error instanceof Error && error.name === 'AbortError') {

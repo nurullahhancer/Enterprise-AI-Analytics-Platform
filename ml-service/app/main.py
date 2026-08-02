@@ -8,6 +8,7 @@ import re
 import threading
 import unicodedata
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 try:
     from typing import Self
@@ -19,7 +20,7 @@ except ImportError:
 
 import numpy as np
 import pandas as pd
-from fastapi import Body, FastAPI, Header, HTTPException, Path, Query, Response, status
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field, model_validator
 
 try:
@@ -30,7 +31,50 @@ except ImportError:
 logger = logging.getLogger("ml-service")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Enterprise AI ML Service")
+MIN_INTERNAL_API_KEY_LENGTH = 32
+
+
+def _configured_internal_api_key() -> str:
+    value = os.getenv("ML_INTERNAL_API_KEY", "").strip()
+    weak_markers = (
+        "change-me", "changeme", "replace-me", "replace_me", "test-only",
+        "example-secret", "your-secret", "default-secret",
+    )
+    is_weak = len(set(value)) < 8 or any(marker in value.lower() for marker in weak_markers)
+    if len(value) < MIN_INTERNAL_API_KEY_LENGTH or is_weak:
+        raise RuntimeError(
+            f"ML_INTERNAL_API_KEY must contain at least {MIN_INTERNAL_API_KEY_LENGTH} unpredictable characters."
+        )
+    return value
+
+
+def require_internal_api_key(
+    x_internal_api_key: Annotated[str | None, Header(max_length=512)] = None,
+) -> None:
+    try:
+        expected_key = _configured_internal_api_key()
+    except RuntimeError as exc:
+        logger.critical("ML internal authentication is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ML service authentication is not configured.",
+        ) from exc
+    presented = (x_internal_api_key or "").encode("utf-8")
+    expected = expected_key.encode("utf-8")
+    if len(presented) != len(expected) or not hmac.compare_digest(presented, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal API key.",
+        )
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    _configured_internal_api_key()
+    yield
+
+
+app = FastAPI(title="Enterprise AI ML Service", lifespan=lifespan)
 
 MAX_PREDICT_POINTS = 10_000
 MAX_NUMERIC_VALUES = 50_000
@@ -273,6 +317,7 @@ BoundedNumericValues = Annotated[
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    _configured_internal_api_key()
     return {"status": "ok", "service": "ml-service"}
 
 
@@ -293,7 +338,7 @@ def metrics() -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4")
 
 
-@app.get("/ml/cache", response_model=CacheStatsResponse)
+@app.get("/ml/cache", response_model=CacheStatsResponse, dependencies=[Depends(require_internal_api_key)])
 def cache_stats() -> CacheStatsResponse:
     """Return current model cache statistics."""
     stats = _cache.stats()
@@ -303,20 +348,14 @@ def cache_stats() -> CacheStatsResponse:
 @app.delete("/ml/cache/{tenant_id}")
 def cache_clear(
     tenant_id: Annotated[str, Path(min_length=1, max_length=MAX_TENANT_ID_LENGTH)],
-    x_internal_api_key: Annotated[str | None, Header(max_length=512)] = None,
+    _: Annotated[None, Depends(require_internal_api_key)],
 ) -> dict[str, Any]:
     """Clear all cached models for the given tenant."""
-    expected_key = os.getenv("ML_INTERNAL_API_KEY")
-    if expected_key and (
-        x_internal_api_key is None
-        or not hmac.compare_digest(x_internal_api_key.encode("utf-8"), expected_key.encode("utf-8"))
-    ):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal API key.")
     cleared = _cache.clear(tenant_id)
     return {"cleared_entries": cleared}
 
 
-@app.post("/predict", response_model=PredictResponse)
+@app.post("/predict", response_model=PredictResponse, dependencies=[Depends(require_internal_api_key)])
 def predict(
     request: PredictRequest,
     x_tenant_id: Annotated[str, Header(max_length=MAX_TENANT_ID_LENGTH)] = "anonymous",
@@ -370,7 +409,7 @@ def predict(
         )
     return response
 
-@app.post("/anomalies")
+@app.post("/anomalies", dependencies=[Depends(require_internal_api_key)])
 def anomalies(
     values: BoundedNumericValues,
     x_tenant_id: Annotated[str, Header(max_length=MAX_TENANT_ID_LENGTH)] = "anonymous",
@@ -387,7 +426,7 @@ def anomalies(
     return {**result, "cached": False}
 
 
-@app.post("/clusters")
+@app.post("/clusters", dependencies=[Depends(require_internal_api_key)])
 def clusters(
     values: BoundedNumericValues,
     k: Annotated[int, Query(ge=1, le=100)] = 2,
@@ -405,7 +444,7 @@ def clusters(
     return {**result, "cached": False}
 
 
-@app.post("/analyze", response_model=AnalyzeResponse)
+@app.post("/analyze", response_model=AnalyzeResponse, dependencies=[Depends(require_internal_api_key)])
 def analyze(
     request: AnalyzeRequest,
     x_tenant_id: Annotated[str, Header(max_length=MAX_TENANT_ID_LENGTH)] = "anonymous",

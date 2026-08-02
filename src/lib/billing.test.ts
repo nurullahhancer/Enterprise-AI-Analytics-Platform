@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BillingValidationError, createIyzicoBillingProvider } from './billing';
+import { BillingValidationError, createIyzicoBillingProvider, normalizeSubscriptionState } from './billing';
 
 const configuration = {
   apiKey: 'sandbox-api-key',
@@ -15,6 +15,14 @@ afterEach(() => {
 });
 
 describe('iyzico hosted subscription adapter', () => {
+  it('maps provider statuses to the explicit subscription state machine', () => {
+    expect(normalizeSubscriptionState('ACTIVE')).toBe('active');
+    expect(normalizeSubscriptionState('PENDING', 14)).toBe('trial');
+    expect(normalizeSubscriptionState('PENDING')).toBe('pending');
+    expect(normalizeSubscriptionState('UNPAID')).toBe('past_due');
+    expect(normalizeSubscriptionState('CANCELED')).toBe('cancelled');
+    expect(normalizeSubscriptionState('EXPIRED')).toBe('expired');
+  });
   it('initializes the hosted form without accepting card data', async () => {
     vi.stubEnv('APP_URL', 'https://app.example.com');
     vi.stubEnv('IYZICO_PLAN_PROFESSIONAL', 'pricing-plan-professional');

@@ -21,6 +21,9 @@ function resetAiEnv() {
   delete process.env.GEMINI_AI_MODEL;
   delete process.env.AI_REQUEST_TIMEOUT_MS;
   delete process.env.AI_MAX_OUTPUT_TOKENS;
+  delete process.env.AI_MAX_RETRIES;
+  delete process.env.AI_INPUT_COST_PER_MILLION_USD;
+  delete process.env.AI_OUTPUT_COST_PER_MILLION_USD;
 }
 
 describe('AI provider adapter', () => {
@@ -64,10 +67,11 @@ describe('AI provider adapter', () => {
 
     const response = await generateAiResponse('test prompt');
 
-    expect(response).toEqual({
+    expect(response).toMatchObject({
       text: 'Merhaba',
       provider: 'nvidia',
-      model: 'nvidia/nemotron-3-super-120b-a12b'
+      model: 'nvidia/nemotron-3-super-120b-a12b',
+      usage: { estimated: true }
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
@@ -108,6 +112,30 @@ describe('AI provider adapter', () => {
       status: 502,
       code: 'AI_EMPTY_RESPONSE'
     } satisfies Partial<AiProviderError>);
+  });
+
+  it('retries transient provider failures with bounded backoff and reports token cost', async () => {
+    process.env.AI_PROVIDER = 'nvidia';
+    process.env.NVIDIA_API_KEY = 'test-nvidia-key';
+    process.env.AI_MAX_RETRIES = '1';
+    process.env.AI_INPUT_COST_PER_MILLION_USD = '2';
+    process.env.AI_OUTPUT_COST_PER_MILLION_USD = '4';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, headers: new Headers() })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: vi.fn().mockResolvedValue({
+          choices: [{ message: { content: 'Yanıt' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 }
+        })
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await generateAiResponse('test prompt');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(response.usage).toEqual({ inputTokens: 10, outputTokens: 5, costMicroUsd: 40, estimated: false });
   });
 
   it('rejects invalid model names before making provider calls', async () => {

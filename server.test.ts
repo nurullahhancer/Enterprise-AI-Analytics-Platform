@@ -23,6 +23,7 @@ import {
   consumeUsage,
   createAuthActionToken,
   createInvitation,
+  grantOrganizationEntitlement,
   getUsage,
   PlanQuotaError,
   refundUsage,
@@ -148,6 +149,44 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
 
     expect(logout.status).toBe(204);
     expect(reusedToken.status).toBe(401);
+  });
+
+  it('rotates refresh tokens and revokes the token family when an old token is reused', async () => {
+    const email = `refresh-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Refresh Test', password: 'securePassword123' }).expect(201);
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' }).expect(200);
+
+    const rotated = await request(app).post('/api/refresh').send({ refreshToken: login.body.refreshToken });
+    expect(rotated.status).toBe(200);
+    expect(rotated.body.refreshToken).not.toBe(login.body.refreshToken);
+
+    const reuse = await request(app).post('/api/refresh').send({ refreshToken: login.body.refreshToken });
+    expect(reuse.status).toBe(401);
+    expect(reuse.body.error.code).toBe('REFRESH_TOKEN_REUSE');
+
+    await request(app)
+      .get('/api/me')
+      .set('Authorization', `Bearer ${rotated.body.token}`)
+      .expect(401);
+  });
+
+  it('revokes existing sessions and issues a fresh token family after a password change', async () => {
+    const email = `password-change-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Password Test', password: 'securePassword123' }).expect(201);
+    const login = await request(app).post('/api/login').send({ email, password: 'securePassword123' }).expect(200);
+
+    const changed = await request(app)
+      .put('/api/user')
+      .set('Authorization', `Bearer ${login.body.token}`)
+      .send({ name: 'Password Test', currentPassword: 'securePassword123', password: 'newSecurePassword456' });
+    expect(changed.status).toBe(200);
+    expect(changed.body.token).toBeDefined();
+    expect(changed.body.refreshToken).toBeDefined();
+
+    await request(app).post('/api/refresh').send({ refreshToken: login.body.refreshToken }).expect(401);
+    await request(app).get('/api/me').set('Authorization', `Bearer ${login.body.token}`).expect(401);
+    await request(app).get('/api/me').set('Authorization', `Bearer ${changed.body.token}`).expect(200);
+    await request(app).post('/api/refresh').send({ refreshToken: changed.body.refreshToken }).expect(200);
   });
 
   it('uses an HttpOnly cookie for same-origin web sessions', async () => {
@@ -293,7 +332,8 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
       .post('/api/login')
       .send({ email, password: 'securePassword123' });
     const authorization = `Bearer ${login.body.token}`;
-    const content = Buffer.from(`note\n${'x'.repeat((10 * 1024 * 1024) + 1_024)}\n`);
+    const row = `${'x'.repeat(218)}\n`;
+    const content = Buffer.from(`note\n${row.repeat(49_000)}`);
 
     const uploaded = await request(app)
       .post('/api/upload')
@@ -301,7 +341,7 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
       .attach('file', content, 'buyuk-veri.csv');
 
     expect(uploaded.status).toBe(200);
-    expect(uploaded.body).toMatchObject({ filename: 'buyuk-veri.csv', rowCount: 1, columnCount: 1 });
+    expect(uploaded.body).toMatchObject({ filename: 'buyuk-veri.csv', rowCount: 49_000, columnCount: 1 });
 
     await request(app)
       .delete(`/api/dataset/${uploaded.body.id}`)
@@ -520,6 +560,32 @@ describe('Express JWT Authentication & Registration Integration Tests', () => {
 
     expect(await consumeUsage(membership.organization_id, 'ml_runs', 25)).toBe(25);
     await expect(consumeUsage(membership.organization_id, 'ml_runs')).rejects.toBeInstanceOf(PlanQuotaError);
+  });
+
+  it('applies active organization entitlements without disabling abuse rate limits', async () => {
+    const email = `entitlement-${Date.now()}@enterprise.com`;
+    await request(app).post('/api/register').send({ email, name: 'Entitlement Test', password: 'securePassword123' });
+    const membership = (await getActiveMembership(email))!;
+    const startsAt = new Date(Date.now() - 60_000);
+
+    await grantOrganizationEntitlement(
+      membership.organization_id,
+      'unlimited_ml',
+      'security-test',
+      'Expired entitlement must not apply.',
+      { startsAt, expiresAt: new Date(Date.now() - 1_000) }
+    );
+    expect(await consumeUsage(membership.organization_id, 'ml_runs', 25, email)).toBe(25);
+    await expect(consumeUsage(membership.organization_id, 'ml_runs', 1, email)).rejects.toBeInstanceOf(PlanQuotaError);
+
+    await grantOrganizationEntitlement(
+      membership.organization_id,
+      'unlimited_ml',
+      'security-test',
+      'Time-bounded customer trial.',
+      { startsAt, expiresAt: new Date(Date.now() + 60_000) }
+    );
+    expect(await consumeUsage(membership.organization_id, 'ml_runs', 1, email)).toBe(26);
   });
 
   it('enforces per-person AI limits, refunds failed requests and automatically uses prepaid credits', async () => {

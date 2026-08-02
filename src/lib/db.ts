@@ -1,7 +1,7 @@
 import { database, QueryExecutor } from './database';
 import { getPlan, PlanKey } from './plans';
 import { initializeSchema, personalOrganizationId } from './schema';
-import { isUnlimitedAccount } from './saasDb';
+import { hasOrganizationEntitlement } from './saasDb';
 import logger from './logger';
 
 const DATASET_TABLE = 'user_datasets_v2';
@@ -110,7 +110,7 @@ export async function ensurePersonalOrganization(
     const role = membershipRole || user?.role || 'analyst';
     await transaction.run(
       `INSERT INTO saas_organizations (id, name, slug, owner_email, plan_key)
-       VALUES (?, ?, ?, ?, 'starter') ON CONFLICT (id) DO NOTHING`,
+       VALUES (?, ?, ?, ?, 'starter') ON CONFLICT DO NOTHING`,
       [organizationId, `${name || user?.name || normalizedEmail} Çalışma Alanı`, personalSlug(normalizedEmail, organizationId), normalizedEmail]
     );
     await transaction.run(
@@ -252,7 +252,7 @@ export async function saveUserDatasetInTransaction(
     [organizationId]
   );
   const plan = getPlan(await organizationPlan(transaction, organizationId));
-  const isUnlimited = await isUnlimitedAccount(transaction, organizationId);
+  const isUnlimited = await hasOrganizationEntitlement(transaction, organizationId, ['unlimited_trial', 'unlimited_datasets']);
   const nextCount = Number(usage?.count || 0) + (existingSource ? 0 : 1);
   if (!isUnlimited && nextCount > plan.limits.datasets) {
     throw new StorageQuotaError('DATASET_QUOTA_EXCEEDED', `Plan kotası aşıldı: en fazla ${plan.limits.datasets} veri seti yüklenebilir.`);
@@ -496,7 +496,7 @@ export async function createConnection(scope: string, type: string, name: string
   return database.tenantTransaction(organizationId, async (transaction) => {
     const count = await transaction.get<{ count: string | number }>('SELECT COUNT(*) AS count FROM user_connections WHERE organization_id = ?', [organizationId]);
     const plan = getPlan(await organizationPlan(transaction, organizationId));
-    const isUnlimited = await isUnlimitedAccount(transaction, organizationId, actor);
+    const isUnlimited = await hasOrganizationEntitlement(transaction, organizationId, ['unlimited_trial']);
     if (!isUnlimited && Number(count?.count || 0) >= plan.limits.connectors) {
       throw new StorageQuotaError('CONNECTOR_QUOTA_EXCEEDED', `Plan kotası aşıldı: en fazla ${plan.limits.connectors} konnektör.`);
     }
@@ -538,7 +538,7 @@ export async function saveDocument(scope: string, filename: string, content: str
       `SELECT COUNT(*) AS count, COALESCE(SUM(LENGTH(content)), 0) AS chars FROM user_documents WHERE organization_id = ?`, [organizationId]
     );
     const plan = getPlan(await organizationPlan(transaction, organizationId));
-    const isUnlimited = await isUnlimitedAccount(transaction, organizationId, actor);
+    const isUnlimited = await hasOrganizationEntitlement(transaction, organizationId, ['unlimited_trial']);
     if (!isUnlimited && (Number(usage?.count || 0) >= plan.limits.documents || Number(usage?.chars || 0) + content.length > plan.limits.documentChars)) {
       throw new StorageQuotaError('DOCUMENT_QUOTA_EXCEEDED', `Plan kotası aşıldı: en fazla ${plan.limits.documents} doküman ve ${plan.limits.documentChars.toLocaleString('tr-TR')} karakter.`);
     }
@@ -625,6 +625,9 @@ export async function updateUserRole(email: string, role: DbUser['role']): Promi
 export async function changeUserRole(email: string, role: DbUser['role']): Promise<'updated' | 'not_found' | 'last_admin'> {
   await ready();
   return database.transaction(async (transaction) => {
+    if (transaction.dialect === 'postgres') {
+      await transaction.get("SELECT pg_advisory_xact_lock(hashtextextended('global-admin-role', 0)) AS locked");
+    }
     const target = await transaction.get<Pick<DbUser, 'role'>>('SELECT role FROM users WHERE email = ?', [email]);
     if (!target) return 'not_found';
     if (target.role === 'admin' && role !== 'admin') {

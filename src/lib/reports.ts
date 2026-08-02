@@ -1,11 +1,11 @@
-import { authHeaders, getApiUrl } from './api';
+import { apiFetch, authHeaders, getApiUrl } from './api';
 
 export type ReportType = 'dashboard' | 'prediction' | 'quality' | 'insights';
 
 export async function downloadReport(type: ReportType) {
   const url = getApiUrl(`/reports/download?type=${encodeURIComponent(type)}`);
 
-  const response = await fetch(url, { headers: authHeaders() });
+  const response = await apiFetch(url, { headers: authHeaders() });
   if (!response.ok) {
     let message = 'Rapor indirilemedi.';
     try {

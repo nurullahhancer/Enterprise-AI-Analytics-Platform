@@ -5,12 +5,26 @@ import { getDocumentsForSearch } from '../../lib/db';
 import { cleanAssistantAnswer, SYSTEM_PROMPT, sanitizeQuery } from '../../lib/prompts';
 import logger from '../../lib/logger';
 import { AiProviderError, generateAiResponse, generateAiResponseStream, getAiConfiguration } from '../ai/provider';
-import { consumeUsage, PlanQuotaError, refundUsage } from '../../lib/saasDb';
+import { consumeUsage, PlanQuotaError, recordAiProviderUsage, refundUsage } from '../../lib/saasDb';
+import { recordAiMetrics } from '../../lib/metrics';
 import { consumeAiRateLimit } from '../ai/quota';
 import { buildDataProfile, buildDatasetSummary } from '../ml/pipeline';
 import { getLatestAnalysisRun } from '../../lib/analysisDb';
 
 const router = Router();
+
+async function recordProviderUsage(req: AuthenticatedRequest, response: Awaited<ReturnType<typeof generateAiResponse>>): Promise<void> {
+  recordAiMetrics(response.provider, response.usage);
+  await recordAiProviderUsage({
+    organizationId: req.organization!.organization_id,
+    email: req.user!.email,
+    requestKind: 'chat',
+    provider: response.provider,
+    model: response.model,
+    ...response.usage,
+    requestId: String(req.headers['x-request-id'] || '') || undefined
+  }).catch((error) => logger.error('AI sağlayıcı kullanım kaydı yazılamadı.', { error }));
+}
 
 function relevantDocumentContext(documents: any[], question: string): string {
   const maxChars = Math.min(Number(process.env.MAX_RAG_CONTEXT_CHARS || 40_000), 100_000);
@@ -182,6 +196,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response, next: NextFunc
         });
         const answer = cleanAssistantAnswer(bufferedAnswer, allowDialogueFormat);
         if (!answer) throw new AiProviderError(502, 'AI_EMPTY_RESPONSE', 'AI servisinden boş yanıt alındı.');
+        await recordProviderUsage(req, response);
         res.write(`data: ${JSON.stringify({ token: answer })}\n\n`);
 
         logger.info('AI akışı tamamlandı.', {
@@ -209,6 +224,7 @@ router.post('/', async (req: AuthenticatedRequest, res: Response, next: NextFunc
       const response = await generateAiResponse(prompt);
       const answer = cleanAssistantAnswer(response.text, allowDialogueFormat);
       if (!answer) throw new AiProviderError(502, 'AI_EMPTY_RESPONSE', 'AI servisinden boş yanıt alındı.');
+      await recordProviderUsage(req, response);
 
       logger.info('AI yanıtı tamamlandı.', {
         mode: isRag ? 'rag' : 'dataset',

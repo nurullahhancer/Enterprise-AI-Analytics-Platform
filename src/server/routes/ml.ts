@@ -5,7 +5,7 @@ import { buildMlForecast, buildMlInsights } from '../ml/pipeline';
 import { parseCsv } from '../ml/parser';
 import { enqueueJob, getJobStatus, MlQueueLimitError } from '../ml/jobQueue';
 import logger from '../../lib/logger';
-import { consumeUsage, PlanQuotaError, refundUsage } from '../../lib/saasDb';
+import { consumeUsage, PlanQuotaError, recordAiProviderUsage, refundUsage } from '../../lib/saasDb';
 import {
   createAnalysisRun,
   deleteAnalysisRun,
@@ -16,6 +16,7 @@ import {
 import { addAuditLog } from '../../lib/db';
 import { AiProviderError, generateAiResponse, getAiConfiguration } from '../ai/provider';
 import { consumeAiRateLimit } from '../ai/quota';
+import { recordAiMetrics } from '../../lib/metrics';
 
 const router = Router();
 
@@ -45,6 +46,10 @@ async function analyzeWithFastApi(
   body: Record<string, unknown> | undefined
 ) {
   const mlServiceUrl = (process.env.ML_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+  const internalApiKey = process.env.ML_INTERNAL_API_KEY?.trim() || '';
+  if (internalApiKey.length < 32) {
+    throw new MlServiceError(503, 'ML servisi kimlik doğrulaması güvenli biçimde yapılandırılmamış.');
+  }
   const timeoutValue = Number(process.env.ML_JOB_TIMEOUT_MS || 60_000);
   const timeoutMs = Number.isFinite(timeoutValue) ? Math.max(5_000, Math.min(timeoutValue, 10 * 60_000)) : 60_000;
   const rows = csvToRows(dataset.file_content);
@@ -53,7 +58,7 @@ async function analyzeWithFastApi(
     headers: {
       'Content-Type': 'application/json',
       'X-Tenant-Id': tenantId,
-      ...(process.env.ML_INTERNAL_API_KEY ? { 'X-Internal-Api-Key': process.env.ML_INTERNAL_API_KEY } : {})
+      'X-Internal-Api-Key': internalApiKey
     },
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
@@ -400,6 +405,16 @@ router.post('/analyses/:id/interpret', async (req: AuthenticatedRequest, res: Re
     };
     const prompt = `Sen, veri veya yazılım bilgisi olmayan bir işletme sahibine sonuçları açıklayan deneyimli bir iş danışmanısın. Aşağıdaki kanıt doğrulanmış analiz sonuçlarını içerir. Türkçe, doğal ve doğrudan konuş.\n\nYanıt biçimi mutlaka şöyle olsun:\n## Beklenen sonuç\nÖnümüzdeki kaç dönemde ne kadar sonuç beklendiğini tek, net bir cümleyle söyle. businessSummary.useTotal true ise expectedTotal değerini, false ise expectedPeriodAverage değerini kullan.\n\n## Değişim\nİlk dönem ile son dönem arasındaki artış, düşüş veya dengeli görünümü sayıyla açıkla. Varsa olası alt ve üst aralığı anlaşılır biçimde belirt.\n\n## Önerilen adımlar\nİşletmenin şimdi uygulayabileceği en fazla 3 kısa ve somut öneri yaz. Yalnız availableColumns içindeki kanıtla desteklenen alanlarda öneri ver. Stok veya ürün verisi yoksa stok; çalışan, iş yükü veya kapasite verisi yoksa ekip/kapasite; fiyat veya kampanya verisi yoksa fiyat/kampanya önerisi verme. forecastQuality very_low veya low ise operasyonel değişiklik önermek yerine tahminin kaba bir gösterge olduğunu açıkla; veri kalitesini artırma, izleme ve yeniden doğrulama öner. Kalite puanını doğru çıkma olasılığı olarak yorumlama.\n\n## Tahmin notu\nTahminin geçmiş verilere dayandığını ve kampanya, fiyat, stok veya piyasa değişikliklerinin sonucu etkileyebileceğini tek cümleyle belirt.\n\nKesin kurallar:\n- Yalnız kanıttaki sayıları kullan; sayı, neden veya ilişki uydurma.\n- Kullanıcıya yöntem anlatma. "model", "algoritma", "makine öğrenmesi", "MAE", "RMSE", "R²", "SMAPE", "ROC-AUC", "holdout", "eğitim verisi", "test verisi", "regresyon", "confidence", "JSON" ve sağlayıcı adlarını yazma.\n- Teknik kolon adını aynen tekrarlamak yerine mümkünse satış, satış tutarı, satış adedi, ciro, gelir, kâr veya talep gibi doğal bir ad kullan.\n- Başlıklarda veya metinde kendi kendine soru sorma; soru cümlesi, Soru/Cevap biçimi ve varsayımsal diyalog kullanma.\n- confidence değerini gerçekleşme olasılığı gibi sunma.\n- Veri yetersizse bunu "Bu konuda net bir sonuç çıkarmak için yeterli geçmiş veri yok" diye açıkla.\n- Uzun giriş, teknik açıklama ve genel geçer övgü yazma.\n\n<dogrulanmis_analiz>\n${JSON.stringify(evidence)}\n</dogrulanmis_analiz>`;
     const response = await generateAiResponse(prompt);
+    recordAiMetrics(response.provider, response.usage);
+    await recordAiProviderUsage({
+      organizationId,
+      email: req.user!.email,
+      requestKind: 'analysis_interpretation',
+      provider: response.provider,
+      model: response.model,
+      ...response.usage,
+      requestId: String(req.headers['x-request-id'] || '') || undefined
+    }).catch((error) => logger.error('AI analiz kullanım kaydı yazılamadı.', { error }));
     await saveAnalysisInterpretation(organizationId, run.id, response.text, response.provider, response.model);
     aiUsageReserved = false;
     void addAuditLog(

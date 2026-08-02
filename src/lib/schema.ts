@@ -17,6 +17,23 @@ const BUSINESS_TABLES = [
   'kpi_evaluations'
 ] as const;
 
+const SAAS_TENANT_TABLES = [
+  'organization_subscriptions',
+  'organization_entitlements',
+  'billing_checkouts',
+  'billing_events',
+  'usage_counters',
+  'user_usage_counters',
+  'organization_ai_settings',
+  'organization_ai_credit_wallet',
+  'usage_bonus_allocations',
+  'usage_threshold_events',
+  'ai_credit_purchases',
+  'ai_provider_usage'
+] as const;
+
+const POSTGRES_RLS_TABLES = [...BUSINESS_TABLES, ...SAAS_TENANT_TABLES] as const;
+
 const SCHEMA_MIGRATION_LOCK = 'enterprise-ai-analytics:schema-migration:v1';
 
 export function personalOrganizationId(email: string): string {
@@ -59,6 +76,21 @@ async function createCoreTables(transaction: QueryExecutor): Promise<void> {
   await addColumn(transaction, 'users', 'role', "TEXT NOT NULL DEFAULT 'analyst'");
   await addColumn(transaction, 'users', 'token_version', 'INTEGER NOT NULL DEFAULT 0');
   await addColumn(transaction, 'users', 'email_verified_at', timestamp);
+
+  await transaction.run(`
+    CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+      family_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at ${timestamp} NOT NULL,
+      consumed_at ${timestamp},
+      revoked_at ${timestamp},
+      replaced_by TEXT,
+      created_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await transaction.run('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON auth_refresh_tokens(email, family_id, revoked_at)');
 
   await transaction.run(`
     CREATE TABLE IF NOT EXISTS saas_organizations (
@@ -327,6 +359,31 @@ async function createSaasTables(transaction: QueryExecutor): Promise<void> {
     )
   `);
   await transaction.run(`
+    CREATE TABLE IF NOT EXISTS billing_subscription_scopes (
+      provider_subscription_reference TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES saas_organizations(id) ON DELETE CASCADE,
+      created_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await transaction.run(`
+    CREATE TABLE IF NOT EXISTS organization_entitlements (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES saas_organizations(id) ON DELETE CASCADE,
+      entitlement_type TEXT NOT NULL CHECK (entitlement_type IN (
+        'unlimited_trial', 'unlimited_ai', 'unlimited_ml',
+        'unlimited_datasets', 'internal_demo', 'beta_access'
+      )),
+      enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+      starts_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at ${timestamp},
+      granted_by TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (organization_id, entitlement_type)
+    )
+  `);
+  await transaction.run(`
     CREATE TABLE IF NOT EXISTS billing_checkouts (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL REFERENCES saas_organizations(id) ON DELETE CASCADE,
@@ -343,10 +400,19 @@ async function createSaasTables(transaction: QueryExecutor): Promise<void> {
   await transaction.run(`
     CREATE TABLE IF NOT EXISTS billing_events (
       event_key TEXT PRIMARY KEY,
-      organization_id TEXT,
+      organization_id TEXT NOT NULL REFERENCES saas_organizations(id) ON DELETE CASCADE,
       event_type TEXT NOT NULL,
       payload_json TEXT NOT NULL,
       processed_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await transaction.run(`
+    CREATE TABLE IF NOT EXISTS billing_record_scopes (
+      record_id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES saas_organizations(id) ON DELETE CASCADE,
+      record_type TEXT NOT NULL CHECK (record_type IN ('subscription_checkout', 'ai_credit_purchase')),
+      provider_token_hash TEXT NOT NULL UNIQUE,
+      created_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
   await transaction.run(`
@@ -428,9 +494,46 @@ async function createSaasTables(transaction: QueryExecutor): Promise<void> {
       updated_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await transaction.run(`
+    CREATE TABLE IF NOT EXISTS ai_provider_usage (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES saas_organizations(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      request_kind TEXT NOT NULL CHECK (request_kind IN ('chat', 'analysis_interpretation')),
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+      output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+      cost_microusd INTEGER NOT NULL DEFAULT 0 CHECK (cost_microusd >= 0),
+      usage_estimated INTEGER NOT NULL DEFAULT 0 CHECK (usage_estimated IN (0, 1)),
+      request_id TEXT,
+      created_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
   await transaction.run('CREATE INDEX IF NOT EXISTS idx_user_usage_period ON user_usage_counters(organization_id, period_key, email)');
   await transaction.run('CREATE INDEX IF NOT EXISTS idx_usage_bonus_period ON usage_bonus_allocations(organization_id, metric, period_key)');
   await transaction.run('CREATE INDEX IF NOT EXISTS idx_ai_credit_purchases_org ON ai_credit_purchases(organization_id, created_at)');
+  await transaction.run('CREATE INDEX IF NOT EXISTS idx_entitlements_org_active ON organization_entitlements(organization_id, entitlement_type, enabled, expires_at)');
+  await transaction.run('CREATE INDEX IF NOT EXISTS idx_billing_record_scopes_org ON billing_record_scopes(organization_id, record_type)');
+  await transaction.run('CREATE INDEX IF NOT EXISTS idx_ai_provider_usage_org_created ON ai_provider_usage(organization_id, created_at)');
+  await transaction.run(`
+    INSERT INTO billing_record_scopes (record_id, organization_id, record_type, provider_token_hash)
+    SELECT id, organization_id, 'subscription_checkout', provider_token FROM billing_checkouts
+    WHERE 1 = 1
+    ON CONFLICT (record_id) DO NOTHING
+  `);
+  await transaction.run(`
+    INSERT INTO billing_record_scopes (record_id, organization_id, record_type, provider_token_hash)
+    SELECT id, organization_id, 'ai_credit_purchase', provider_token FROM ai_credit_purchases
+    WHERE 1 = 1
+    ON CONFLICT (record_id) DO NOTHING
+  `);
+  await transaction.run(`
+    INSERT INTO billing_subscription_scopes (provider_subscription_reference, organization_id)
+    SELECT provider_subscription_reference, organization_id FROM organization_subscriptions
+    WHERE provider_subscription_reference IS NOT NULL
+    ON CONFLICT (provider_subscription_reference) DO UPDATE SET organization_id = excluded.organization_id
+  `);
 }
 
 async function upsertPersonalOrganization(transaction: QueryExecutor, email: string, name: string, role: string): Promise<string> {
@@ -439,7 +542,7 @@ async function upsertPersonalOrganization(transaction: QueryExecutor, email: str
   const safeRole = ['admin', 'analyst', 'viewer'].includes(role) ? role : 'analyst';
   await transaction.run(
     `INSERT INTO saas_organizations (id, name, slug, owner_email, plan_key)
-     VALUES (?, ?, ?, ?, 'starter') ON CONFLICT (id) DO NOTHING`,
+     VALUES (?, ?, ?, ?, 'starter') ON CONFLICT DO NOTHING`,
     [organizationId, `${name.trim() || normalizedEmail} Çalışma Alanı`, slugFor(normalizedEmail, organizationId), normalizedEmail]
   );
   await transaction.run(
@@ -470,7 +573,11 @@ async function migrateLegacyData(transaction: QueryExecutor): Promise<void> {
 
 async function configurePostgresRls(transaction: QueryExecutor): Promise<void> {
   if (transaction.dialect !== 'postgres') return;
-  for (const table of BUSINESS_TABLES) {
+  for (const table of POSTGRES_RLS_TABLES) {
+    const orphan = await transaction.get<{ count: string | number }>(`SELECT COUNT(*) AS count FROM ${table} WHERE organization_id IS NULL`);
+    if (Number(orphan?.count || 0) > 0) {
+      throw new Error(`Cannot enable forced RLS on ${table}: rows without organization_id require an explicit migration.`);
+    }
     await transaction.run(`ALTER TABLE ${table} ALTER COLUMN organization_id SET NOT NULL`);
     await transaction.run(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
     await transaction.run(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
@@ -485,7 +592,7 @@ async function configurePostgresRls(transaction: QueryExecutor): Promise<void> {
 
 async function suspendPostgresRlsForMigration(transaction: QueryExecutor): Promise<void> {
   if (transaction.dialect !== 'postgres') return;
-  for (const table of BUSINESS_TABLES) {
+  for (const table of POSTGRES_RLS_TABLES) {
     await transaction.run(`ALTER TABLE ${table} NO FORCE ROW LEVEL SECURITY`);
     await transaction.run(`ALTER TABLE ${table} DISABLE ROW LEVEL SECURITY`);
   }

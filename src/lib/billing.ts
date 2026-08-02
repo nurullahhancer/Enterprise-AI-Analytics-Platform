@@ -5,6 +5,7 @@ export type BillingProviderName = 'iyzico';
 export type IyzicoLocale = 'tr' | 'en';
 export type IyzicoSubscriptionInitialStatus = 'ACTIVE' | 'PENDING';
 export type IyzicoSubscriptionStatus = 'ACTIVE' | 'PENDING' | 'UNPAID' | 'UPGRADED' | 'CANCELED' | 'EXPIRED';
+export type SubscriptionState = 'trial' | 'active' | 'pending' | 'past_due' | 'cancelled' | 'expired';
 export type IyzicoSubscriptionEventType = 'subscription.order.success' | 'subscription.order.failure';
 
 const IYZICO_ALLOWED_HOSTS = new Set(['api.iyzipay.com', 'sandbox-api.iyzipay.com']);
@@ -494,6 +495,17 @@ function parseSubscriptionStatus(value: unknown): IyzicoSubscriptionStatus {
     return value as IyzicoSubscriptionStatus;
   }
   throw new BillingProviderError('BILLING_MALFORMED_RESPONSE', 'Ödeme sağlayıcısı abonelik durumunu döndürmedi.');
+}
+
+export function normalizeSubscriptionState(
+  status: IyzicoSubscriptionStatus,
+  trialDays?: number
+): SubscriptionState {
+  if (status === 'ACTIVE' || status === 'UPGRADED') return 'active';
+  if (status === 'PENDING') return Number(trialDays) > 0 ? 'trial' : 'pending';
+  if (status === 'UNPAID') return 'past_due';
+  if (status === 'CANCELED') return 'cancelled';
+  return 'expired';
 }
 
 function parsePaymentPageUrl(value: unknown): string | undefined {

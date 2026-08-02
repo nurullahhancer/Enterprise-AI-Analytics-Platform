@@ -38,7 +38,7 @@ import {
 } from '../../lib/saasDb';
 import { appLink, isEmailConfigured, sendTransactionalEmail } from '../../lib/email';
 import { createOpaqueToken, hashOpaqueToken } from '../../lib/securityTokens';
-import { getAiCreditPackages, getBillingProvider, getIyzicoBillingConfiguration, resolveIyzicoPlanReferenceCode } from '../../lib/billing';
+import { getAiCreditPackages, getBillingProvider, getIyzicoBillingConfiguration, normalizeSubscriptionState, resolveIyzicoPlanReferenceCode } from '../../lib/billing';
 import { isPlanKey, PlanKey } from '../../lib/plans';
 import logger from '../../lib/logger';
 import { deliverBusinessAlert } from '../../lib/notificationChannels';
@@ -127,12 +127,13 @@ router.all('/billing/callback', async (req, res) => {
     if (result.conversationId && result.conversationId !== checkout.conversation_id) throw new Error('BILLING_CONVERSATION_MISMATCH');
     const planKey = providerPlan(result.pricingPlanReferenceCode);
     if (!planKey || planKey !== checkout.plan_key) throw new Error('BILLING_PLAN_MISMATCH');
-    const active = result.subscriptionStatus === 'ACTIVE';
+    const subscriptionState = normalizeSubscriptionState(result.subscriptionStatus, result.trialDays);
+    const active = subscriptionState === 'active' || subscriptionState === 'trial';
     await upsertSubscription({
       organizationId: checkout.organization_id,
       provider: 'iyzico',
       planKey,
-      status: result.subscriptionStatus.toLowerCase(),
+      status: subscriptionState,
       customerReference: result.customerReferenceCode,
       subscriptionReference: result.referenceCode,
       currentPeriodStart: result.startDate ? new Date(result.startDate).toISOString() : null,
@@ -179,26 +180,26 @@ router.all('/billing/ai-credit-callback', async (req, res) => {
 
 router.post('/billing/webhook', async (req, res, next) => {
   let claimedEventId: string | null = null;
+  let claimedOrganizationId: string | null = null;
   try {
     const provider = getBillingProvider();
     const verified = provider.verifySubscriptionWebhook(req.body, req.headers['x-iyz-signature-v3']);
     const existing = await getSubscriptionByProviderReference(verified.event.subscriptionReferenceCode);
+    if (!existing) {
+      logger.warn('Webhook bilinmeyen abonelik referansı için alındı.', { eventId: verified.eventId });
+      return res.status(503).json({ error: { code: 'SUBSCRIPTION_NOT_READY', message: 'Abonelik kaydı henüz hazır değil.' } });
+    }
     const fresh = await recordBillingEvent(
       verified.eventId,
-      existing?.organization_id || null,
+      existing.organization_id,
       verified.event.iyziEventType,
       verified.event
     );
     if (!fresh) return res.status(204).end();
     claimedEventId = verified.eventId;
-    if (!existing) {
-      logger.warn('Webhook bilinmeyen abonelik referansı için alındı.', { eventId: verified.eventId });
-      await releaseBillingEvent(verified.eventId);
-      claimedEventId = null;
-      return res.status(503).json({ error: { code: 'SUBSCRIPTION_NOT_READY', message: 'Abonelik kaydı henüz hazır değil.' } });
-    }
+    claimedOrganizationId = existing.organization_id;
     if (verified.event.iyziEventType === 'subscription.order.failure') {
-      await deactivateSubscription(existing.organization_id, 'unpaid');
+      await deactivateSubscription(existing.organization_id, 'past_due');
       void deliverBusinessAlert(existing.organization_id, 'billing', 'Abonelik tahsilatı başarısız', 'iyzico yenileme tahsilatını başarısız bildirdi; çalışma alanı Starter plana geçirildi.')
         .catch((error) => logger.warn('Tahsilat hatası bildirimi gönderilemedi.', { error, organizationId: existing.organization_id }));
       return res.status(204).end();
@@ -210,7 +211,7 @@ router.post('/billing/webhook', async (req, res, next) => {
       organizationId: existing.organization_id,
       provider: 'iyzico',
       planKey,
-      status: detail.subscriptionStatus.toLowerCase(),
+      status: normalizeSubscriptionState(detail.subscriptionStatus, detail.trialDays),
       customerReference: detail.customerReferenceCode,
       subscriptionReference: detail.referenceCode,
       currentPeriodStart: detail.startDate ? new Date(detail.startDate).toISOString() : null,
@@ -220,7 +221,9 @@ router.post('/billing/webhook', async (req, res, next) => {
       .catch((error) => logger.warn('Abonelik yenileme bildirimi gönderilemedi.', { error, organizationId: existing.organization_id }));
     res.status(204).end();
   } catch (error) {
-    if (claimedEventId) await releaseBillingEvent(claimedEventId).catch(() => undefined);
+    if (claimedEventId && claimedOrganizationId) {
+      await releaseBillingEvent(claimedEventId, claimedOrganizationId).catch(() => undefined);
+    }
     next(error);
   }
 });
@@ -573,7 +576,7 @@ router.post('/billing/cancel', requireRoles('admin'), async (req: AuthenticatedR
     const subscription = await getSubscription(req.organization!.organization_id);
     if (!subscription?.provider_subscription_reference) return res.status(409).json({ error: { code: 'NO_ACTIVE_SUBSCRIPTION', message: 'İptal edilecek sağlayıcı aboneliği bulunamadı.' } });
     await getBillingProvider().cancelSubscription(subscription.provider_subscription_reference);
-    await deactivateSubscription(req.organization!.organization_id, 'canceled');
+    await deactivateSubscription(req.organization!.organization_id, 'cancelled');
     await addAuditLog(req.organization!.organization_id, 'Subscription Canceled', 'Abonelik sağlayıcı üzerinden iptal edildi.', req.ip, req.user!.email);
     void deliverBusinessAlert(req.organization!.organization_id, 'billing', 'Abonelik iptal edildi', 'Ücretli abonelik sağlayıcı üzerinden iptal edildi ve çalışma alanı Starter plana geçirildi.')
       .catch((error) => logger.warn('Abonelik iptal bildirimi gönderilemedi.', { error, organizationId: req.organization!.organization_id }));

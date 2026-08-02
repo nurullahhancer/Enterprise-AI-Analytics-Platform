@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { Dataset } from '../../lib/db';
 import { combineDatasets, DatasetCompatibilityError } from './combined';
 import { excelBufferToCsv, jsonToCsv } from './normalize';
@@ -63,22 +63,41 @@ describe('tabular source normalization', () => {
     ]);
   });
 
-  it('converts Excel buffers (.xlsx/.xls) into normalized CSV', () => {
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet([
-      { Urun: 'Kalem', Fiyat: 15, Stok: 100 },
-      { Urun: 'Defter', Fiyat: 35, Stok: 50 }
+  it('converts safe XLSX buffers into normalized CSV', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Sayfa1');
+    worksheet.addRows([
+      ['Urun', 'Fiyat', 'Stok'],
+      ['Kalem', 15, 100],
+      ['Defter', 35, 50]
     ]);
-    XLSX.utils.book_append_sheet(wb, ws, 'Sayfa1');
-    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
 
-    const normalized = excelBufferToCsv(buffer);
+    const normalized = await excelBufferToCsv(buffer);
     expect(normalized.rowCount).toBe(2);
     expect(normalized.columnCount).toBe(3);
     expect(parseCsv(normalized.csv)).toEqual([
       ['Urun', 'Fiyat', 'Stok'],
       ['Kalem', '15', '100'],
       ['Defter', '35', '50']
+    ]);
+  });
+
+  it('rejects files that only pretend to be XLSX archives', async () => {
+    await expect(excelBufferToCsv(Buffer.from('not-a-zip'))).rejects.toThrow(/geçerli bir XLSX/i);
+  });
+
+  it('rejects formula cells and neutralizes spreadsheet formulas in text input', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Sayfa1');
+    worksheet.addRow(['name', 'value']);
+    worksheet.addRow(['unsafe', { formula: 'HYPERLINK("https://example.invalid")', result: 'click' }]);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    await expect(excelBufferToCsv(buffer)).rejects.toThrow(/formülleri güvenlik nedeniyle/i);
+    expect(parseCsv(jsonToCsv(JSON.stringify([{ value: '=2+2' }])).csv)).toEqual([
+      ['value'],
+      ["'=2+2"]
     ]);
   });
 

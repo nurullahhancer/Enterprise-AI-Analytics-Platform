@@ -1,7 +1,7 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import logger from './src/lib/logger';
 import { authenticateJWT } from './src/server/index';
 import { checkDatabase, closeDatabase, databaseReady } from './src/lib/db';
@@ -12,6 +12,7 @@ import { isEmailConfigured } from './src/lib/email';
 import { startConnectorScheduler, stopConnectorScheduler } from './src/server/connectors/scheduler';
 import { startRetentionScheduler, stopRetentionScheduler } from './src/server/governance/scheduler';
 import { metricsMiddleware, renderMetrics } from './src/lib/metrics';
+import { validateProductionConfiguration } from './src/lib/runtimeConfig';
 
 // Route modules
 import authRouter from './src/server/routes/auth';
@@ -25,6 +26,7 @@ import saasRouter from './src/server/routes/saas';
 import kpiRouter from './src/server/routes/kpis';
 
 async function startServer() {
+  validateProductionConfiguration();
   await databaseReady;
   const app = express();
   const PORT = Number(process.env.PORT || 3010);
@@ -68,7 +70,7 @@ async function startServer() {
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Vary', 'Origin');
     }
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Bootstrap-Token, X-Organization-Id, X-Client-Type, X-IYZ-SIGNATURE-V3');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Bootstrap-Token, X-Organization-Id, X-Client-Type, X-IYZ-SIGNATURE-V3, X-Request-Id');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
@@ -83,7 +85,24 @@ async function startServer() {
   });
 
   app.use((req: Request, res: Response, next: NextFunction) => {
-    logger.info('HTTP request', { method: req.method, path: req.path });
+    const supplied = String(req.headers['x-request-id'] || '').trim();
+    const requestId = /^[A-Za-z0-9._:-]{8,100}$/.test(supplied) ? supplied : crypto.randomUUID();
+    const started = process.hrtime.bigint();
+    req.headers['x-request-id'] = requestId;
+    res.locals.requestId = requestId;
+    res.setHeader('X-Request-Id', requestId);
+    res.once('finish', () => {
+      const authenticated = req as import('./src/server/index').AuthenticatedRequest;
+      logger.info('HTTP request completed', {
+        requestId,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+        organizationId: authenticated.organization?.organization_id,
+        userId: authenticated.user?.email
+      });
+    });
     next();
   });
   app.use(metricsMiddleware);
@@ -141,6 +160,7 @@ async function startServer() {
 
   // ── Frontend ───────────────────────────────────────────────────────────────
   if (!production) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   } else {
@@ -151,7 +171,7 @@ async function startServer() {
 
   // ── Error handler ──────────────────────────────────────────────────────────
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    logger.error('Sunucu hatası.', { error: err, path: req.path, code: err.code });
+    logger.error('Sunucu hatası.', { error: err, path: req.path, code: err.code, requestId: res.locals.requestId });
     let status = Number.isInteger(err.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
     let message = 'Sunucu tarafında beklenmeyen bir hata oluştu.';
     if (err.status === 429 || err.message?.includes('Quota exceeded') || err.message?.includes('429'))
@@ -164,7 +184,7 @@ async function startServer() {
     } else if (typeof err.message === 'string' && err.code && String(err.code).startsWith('BILLING_')) {
       message = err.message;
     }
-    res.status(status).json({ error: { code: err.code || 'INTERNAL_SERVER_ERROR', message } });
+    res.status(status).json({ error: { code: err.code || 'INTERNAL_SERVER_ERROR', message, requestId: res.locals.requestId } });
   });
 
   if (process.env.NODE_ENV !== 'test') {

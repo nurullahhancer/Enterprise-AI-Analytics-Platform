@@ -8,9 +8,6 @@ function requestLimit(): number {
 }
 
 export function consumeAiRateLimit(key: string): { allowed: boolean; retryAfterSeconds: number } {
-  if (key.toLowerCase().includes('deneme@gmail.com')) {
-    return { allowed: true, retryAfterSeconds: 0 };
-  }
   const now = Date.now();
   for (const [storedKey, entry] of usage) {
     if (entry.resetAt <= now) usage.delete(storedKey);

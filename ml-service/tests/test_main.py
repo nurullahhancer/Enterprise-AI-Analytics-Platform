@@ -1,3 +1,6 @@
+import os
+
+import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import AnalyzeRequest, TenantModelCache, app, _cache
@@ -9,6 +12,7 @@ from app.main import AnalyzeRequest, TenantModelCache, app, _cache
 
 TENANT_A = "tenant-a"
 TENANT_B = "tenant-b"
+INTERNAL_HEADERS = {"x-internal-api-key": os.environ["ML_INTERNAL_API_KEY"]}
 
 ROWS_SMALL = [
     {"region": "A", "revenue": 100, "cost": 60},
@@ -31,17 +35,21 @@ def _clear_all() -> None:
         _cache._store.clear()
 
 
+def internal_client() -> TestClient:
+    return TestClient(app, headers=INTERNAL_HEADERS)
+
+
 # ---------------------------------------------------------------------------
 # Existing tests (unchanged behaviour)
 # ---------------------------------------------------------------------------
 
 def test_health() -> None:
-    client = TestClient(app)
+    client = internal_client()
     assert client.get("/health").json()["status"] == "ok"
 
 
 def test_predict_returns_forecast() -> None:
-    client = TestClient(app)
+    client = internal_client()
     response = client.post(
         "/predict",
         json={"history": HISTORY, "periods": 2},
@@ -51,7 +59,7 @@ def test_predict_returns_forecast() -> None:
 
 
 def test_predict_requires_two_points() -> None:
-    client = TestClient(app)
+    client = internal_client()
     response = client.post(
         "/predict",
         json={"history": [{"date": "2026-01-01", "value": 100}], "periods": 2},
@@ -60,7 +68,7 @@ def test_predict_requires_two_points() -> None:
 
 
 def test_anomalies_and_clusters() -> None:
-    client = TestClient(app)
+    client = internal_client()
     anomaly_response = client.post("/anomalies", json=[10, 11, 12, 1000])
     cluster_response = client.post("/clusters?k=2", json=[10, 11, 12, 1000])
 
@@ -71,7 +79,7 @@ def test_anomalies_and_clusters() -> None:
 
 
 def test_analyze_trains_models() -> None:
-    client = TestClient(app)
+    client = internal_client()
     response = client.post(
         "/analyze",
         json={"rows": ROWS_SMALL, "target_column": "revenue", "periods": 2},
@@ -84,7 +92,7 @@ def test_analyze_trains_models() -> None:
     assert body["segments"] is None
 
 def test_analyze_never_averages_business_identifiers() -> None:
-    client = TestClient(app)
+    client = internal_client()
     rows = [
         {"Sipariş No": 1001, "musteri_numarasi": 42, "Tarih": "2026-01-01", "ciro": 100},
         {"Sipariş No": 1001, "musteri_numarasi": 42, "Tarih": "2026-01-02", "ciro": 120},
@@ -99,7 +107,7 @@ def test_analyze_never_averages_business_identifiers() -> None:
     assert body["segments"] is None
 
 def test_analyze_trains_explainable_churn_risk_model() -> None:
-    client = TestClient(app)
+    client = internal_client()
     rows = []
     for index in range(40):
         churn = 1 if index % 4 == 0 or index > 34 else 0
@@ -127,7 +135,7 @@ def test_analyze_trains_explainable_churn_risk_model() -> None:
     assert len(churn_model["data"]) == 10
 
 def test_analyze_time_series_sorts_aggregates_and_validates_future_horizon() -> None:
-    client = TestClient(app)
+    client = internal_client()
     rows = []
     for month in range(1, 11):
         date = f"2026-{month:02d}-01"
@@ -156,7 +164,7 @@ def test_analyze_time_series_sorts_aggregates_and_validates_future_horizon() -> 
     assert "unvalidated" in forecast["model"].lower()
 
 def test_analyze_selects_linear_trend_by_training_only_holdout_mae() -> None:
-    client = TestClient(app)
+    client = internal_client()
     rows = [{"date": f"2026-01-{day:02d}", "revenue": 25 + day * 7} for day in range(1, 16)]
     response = client.post(
         "/analyze",
@@ -174,7 +182,7 @@ def test_analyze_selects_linear_trend_by_training_only_holdout_mae() -> None:
     assert metrics["candidate_metrics"][0]["mae"] == 0
 
 def test_analyze_selects_monthly_seasonal_naive_when_it_wins_holdout() -> None:
-    client = TestClient(app)
+    client = internal_client()
     seasonal_values = [20, 45, 30, 80, 55, 100, 70, 120, 65, 95, 40, 25]
     rows = [
         {"date": f"{2023 + index // 12}-{index % 12 + 1:02d}-01", "revenue": seasonal_values[index % 12]}
@@ -197,7 +205,7 @@ def test_analyze_selects_monthly_seasonal_naive_when_it_wins_holdout() -> None:
     assert metrics["interval_method"] == "rolling_origin_conformal_absolute_residuals_90pct"
 
 def test_analyze_constant_target_never_claims_predictive_confidence() -> None:
-    client = TestClient(app)
+    client = internal_client()
     rows = [{"date": f"2026-{month:02d}-01", "revenue": 100} for month in range(1, 9)]
     response = client.post(
         "/analyze",
@@ -216,7 +224,7 @@ def test_analyze_constant_target_never_claims_predictive_confidence() -> None:
     assert any("constant" in warning.lower() for warning in body["warnings"])
 
 def test_analyze_small_series_returns_forecast_with_zero_unvalidated_confidence() -> None:
-    client = TestClient(app)
+    client = internal_client()
     rows = [{"date": f"2026-0{month}-01", "revenue": month * 100} for month in range(1, 5)]
     response = client.post(
         "/analyze",
@@ -240,7 +248,7 @@ def test_analyze_small_series_returns_forecast_with_zero_unvalidated_confidence(
 def test_predict_cache_hit_same_tenant_same_data() -> None:
     """Second call with identical data returns cached=True."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     headers = {"x-tenant-id": TENANT_A}
     payload = {"history": HISTORY, "periods": 2}
 
@@ -258,7 +266,7 @@ def test_predict_cache_hit_same_tenant_same_data() -> None:
 def test_predict_different_tenants_separate_cache() -> None:
     """Different tenants produce separate cache entries."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     payload = {"history": HISTORY, "periods": 2}
 
     r_a1 = client.post("/predict", json=payload, headers={"x-tenant-id": TENANT_A})
@@ -279,7 +287,7 @@ def test_predict_different_tenants_separate_cache() -> None:
 def test_predict_cache_miss_on_data_change() -> None:
     """Changed data invalidates the cache (new hash → miss)."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     headers = {"x-tenant-id": TENANT_A}
 
     history_v1 = [
@@ -303,7 +311,7 @@ def test_predict_cache_miss_on_data_change() -> None:
 def test_analyze_cache_hit_same_tenant() -> None:
     """Analyze endpoint: second identical call is served from cache."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     headers = {"x-tenant-id": TENANT_A}
     rows = [{"date": f"2026-01-{day:02d}", "revenue": 100 + day * 10, "cost": 60} for day in range(1, 10)]
     payload = {"rows": rows, "target_column": "revenue", "periods": 2}
@@ -320,7 +328,7 @@ def test_analyze_cache_hit_same_tenant() -> None:
 def test_analyze_cache_varies_by_target_and_periods() -> None:
     """A cached analysis must not reuse a different target or forecast horizon."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     headers = {"x-tenant-id": TENANT_A}
     rows = [{"date": f"2026-01-{day:02d}", "revenue": 100 + day * 10, "cost": 60 + day * 5} for day in range(1, 10)]
 
@@ -345,7 +353,7 @@ def test_analyze_cache_varies_by_target_and_periods() -> None:
 def test_analyze_different_tenants_isolated() -> None:
     """Analyze: tenant A cache does not bleed into tenant B."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     payload = {"rows": ROWS_SMALL, "target_column": "revenue", "periods": 2}
 
     r_a = client.post("/analyze", json=payload, headers={"x-tenant-id": TENANT_A})
@@ -359,7 +367,7 @@ def test_analyze_different_tenants_isolated() -> None:
 def test_cache_clear_endpoint() -> None:
     """DELETE /ml/cache/{tenant} removes only that tenant's entries."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     payload = {"rows": ROWS_SMALL, "target_column": "revenue", "periods": 2}
 
     # Populate both tenants
@@ -384,7 +392,7 @@ def test_cache_clear_endpoint() -> None:
 def test_anonymous_tenant_fallback() -> None:
     """Requests without X-Tenant-Id header default to 'anonymous' tenant."""
     _clear_all()
-    client = TestClient(app)
+    client = internal_client()
     payload = {"history": HISTORY, "periods": 1}
 
     r1 = client.post("/predict", json=payload)  # no header
@@ -410,21 +418,44 @@ def test_cache_is_bounded_and_does_not_expose_tenant_ids() -> None:
 
 
 def test_cache_clear_requires_configured_internal_key(monkeypatch) -> None:
-    monkeypatch.setenv("ML_INTERNAL_API_KEY", "test-internal-key")
+    expected_key = "cache-test-internal-api-key-32-characters-minimum"
+    monkeypatch.setenv("ML_INTERNAL_API_KEY", expected_key)
     client = TestClient(app)
 
     denied = client.delete(f"/ml/cache/{TENANT_A}")
     allowed = client.delete(
         f"/ml/cache/{TENANT_A}",
-        headers={"x-internal-api-key": "test-internal-key"},
+        headers={"x-internal-api-key": expected_key},
     )
 
     assert denied.status_code == 401
     assert allowed.status_code == 200
 
 
-def test_analyze_rejects_excessive_column_count() -> None:
+def test_all_model_endpoints_require_internal_authentication() -> None:
     client = TestClient(app)
+    requests = [
+        client.get("/ml/cache"),
+        client.post("/predict", json={"history": HISTORY, "periods": 2}),
+        client.post("/anomalies", json=[1, 2, 3]),
+        client.post("/clusters?k=2", json=[1, 2, 3]),
+        client.post("/analyze", json={"rows": ROWS_SMALL}),
+    ]
+
+    assert all(response.status_code == 401 for response in requests)
+
+
+def test_model_endpoints_fail_closed_when_internal_key_is_weak(monkeypatch) -> None:
+    monkeypatch.setenv("ML_INTERNAL_API_KEY", "0" * 32)
+    client = TestClient(app)
+
+    response = client.post("/anomalies", json=[1, 2, 3])
+
+    assert response.status_code == 503
+
+
+def test_analyze_rejects_excessive_column_count() -> None:
+    client = internal_client()
     oversized_row = {f"column-{index}": index for index in range(101)}
     response = client.post("/analyze", json={"rows": [oversized_row] * 3})
     assert response.status_code == 422
@@ -437,5 +468,8 @@ def test_analyze_request_accepts_combined_dataset_over_ten_thousand_rows() -> No
 
 
 def test_determine_domain_bounds_logic() -> None:
-    pass
+    from app.forecasting_v7 import _infer_bounds
 
+    assert _infer_bounds(np.array([10.0, 20.0]), "revenue") == (0.0, None)
+    assert _infer_bounds(np.array([10.0, 20.0]), "profit_margin") == (None, None)
+    assert _infer_bounds(np.array([10.0, 20.0]), "temperature") == (None, None)

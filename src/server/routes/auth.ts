@@ -26,7 +26,14 @@ import logger from '../../lib/logger';
 import { appLink, isEmailConfigured, sendTransactionalEmail } from '../../lib/email';
 import { createOpaqueToken, hashOpaqueToken } from '../../lib/securityTokens';
 import { acceptInvitation, consumeAuthActionToken, createAuthActionToken, getInvitationByHash } from '../../lib/saasDb';
-import { clearSessionCookie, setSessionCookie, shouldReturnBearerToken } from '../../lib/session';
+import { issueRefreshToken, revokeRefreshTokensForUser, rotateRefreshToken } from '../../lib/refreshTokens';
+import {
+  clearSessionCookie,
+  refreshTokenFromRequest,
+  setRefreshCookie,
+  setSessionCookie,
+  shouldReturnBearerToken
+} from '../../lib/session';
 
 const router = Router();
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -267,9 +274,39 @@ router.post('/reset-password', async (req: AuthenticatedRequest, res: Response, 
     const email = await consumeAuthActionToken(hashOpaqueToken(token), 'reset_password');
     if (!email) return res.status(400).json({ error: { code: 'INVALID_TOKEN', message: 'Şifre yenileme bağlantısı geçersiz veya süresi dolmuş.' } });
     await replacePassword(email, await hashPassword(password));
+    await revokeRefreshTokensForUser(email);
     clearSessionCookie(res);
     res.json({ success: true, message: 'Şifreniz yenilendi. Yeni şifrenizle giriş yapabilirsiniz.' });
   } catch (error) { next(error); }
+});
+
+router.post('/refresh', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const presented = refreshTokenFromRequest(req);
+    if (!presented || presented.length < 30 || presented.length > 100) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: { code: 'INVALID_REFRESH_TOKEN', message: 'Oturum yenileme kodu geçersiz.' } });
+    }
+    const rotated = await rotateRefreshToken(presented);
+    if (rotated.status !== 'rotated') {
+      clearSessionCookie(res);
+      return res.status(401).json({
+        error: {
+          code: rotated.status === 'reuse' ? 'REFRESH_TOKEN_REUSE' : 'INVALID_REFRESH_TOKEN',
+          message: 'Oturum yenilenemedi. Lütfen tekrar giriş yapın.'
+        }
+      });
+    }
+    const token = generateToken(rotated.email, rotated.tokenVersion);
+    setSessionCookie(res, token);
+    setRefreshCookie(res, rotated.refresh.token);
+    res.json({
+      success: true,
+      ...(shouldReturnBearerToken(req) ? { token, refreshToken: rotated.refresh.token } : {})
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.post('/login', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -326,12 +363,14 @@ router.post('/login', async (req: AuthenticatedRequest, res: Response, next: Nex
     const requestedOrganizationId = String(req.headers['x-organization-id'] || '').trim() || undefined;
     const membership = await getActiveMembership(user.email, requestedOrganizationId);
     if (!membership) return res.status(403).json({ error: { code: 'ORGANIZATION_ACCESS_DENIED', message: 'Etkin bir çalışma alanı üyeliği bulunamadı.' } });
+    const refresh = await issueRefreshToken(user.email);
     setSessionCookie(res, token);
+    setRefreshCookie(res, refresh.token);
     await addAuditLog(membership.organization_id, 'User Login', 'Kullanıcı sisteme giriş yaptı.', req.ip, user.email)
       .catch(() => logger.warn('Giriş audit kaydı yazılamadı.'));
     logger.info('Kullanıcı girişi başarılı.', { actor: actorReference(user.email) });
     res.json({
-      ...(shouldReturnBearerToken(req) ? { token } : {}),
+      ...(shouldReturnBearerToken(req) ? { token, refreshToken: refresh.token } : {}),
       user: { id: user.email, name: user.name, email: user.email, role: membership.role, tenantId: membership.organization_id },
       organization: membership
     });
@@ -357,6 +396,7 @@ router.get('/me', authenticateJWT, async (req: AuthenticatedRequest, res: Respon
 router.post('/logout', authenticateJWT, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const email = req.user!.email;
+    await revokeRefreshTokensForUser(email);
     await revokeUserTokens(email);
     await addAuditLog(req.organization!.organization_id, 'User Logout', 'Kullanıcı oturumunu sonlandırdı.', req.ip, email)
       .catch(() => logger.warn('Çıkış audit kaydı yazılamadı.'));
@@ -392,12 +432,19 @@ router.put('/user', authenticateJWT, async (req: AuthenticatedRequest, res: Resp
     await updateUser(email, normalizedName, passwordHash);
     const updated = (await findUserByEmail(email))!;
     const token = passwordHash ? generateToken(updated.email, updated.token_version) : undefined;
+    if (passwordHash) await revokeRefreshTokensForUser(email);
+    // Re-issue only after revoking the old token families so the current
+    // password-change session remains usable while every other session ends.
+    const replacementRefresh = passwordHash ? await issueRefreshToken(updated.email) : undefined;
     if (token) setSessionCookie(res, token);
+    if (replacementRefresh) setRefreshCookie(res, replacementRefresh.token);
     logger.info('Kullanıcı profili güncellendi.', { actor: actorReference(email), passwordChanged: Boolean(passwordHash) });
     res.json({
       message: 'Profil başarıyla güncellendi.',
       user: { email, name: normalizedName, id: email, role: req.user!.role, tenantId: req.organization!.organization_id },
-      ...(token && shouldReturnBearerToken(req) ? { token } : {})
+      ...(token && replacementRefresh && shouldReturnBearerToken(req)
+        ? { token, refreshToken: replacementRefresh.token }
+        : {})
     });
   } catch (err) { next(err); }
 });

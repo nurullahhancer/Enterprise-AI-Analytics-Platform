@@ -14,7 +14,7 @@ import { getCombinedUserDataset } from '../datasets/combined';
 import { parseCsv } from '../ml/parser';
 import { buildDatasetSummary } from '../ml/pipeline';
 import logger from '../../lib/logger';
-import { excelBufferToCsv, jsonToCsv } from '../datasets/normalize';
+import { csvCell, excelBufferToCsv, jsonToCsv } from '../datasets/normalize';
 import { readFile, unlink } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -23,14 +23,30 @@ const router = Router();
 const uploadDirectory = process.env.DATASET_UPLOAD_TMP_DIR || path.resolve(process.cwd(), 'data', 'dataset-uploads');
 mkdirSync(uploadDirectory, { recursive: true, mode: 0o750 });
 
+function boundedInteger(name: string, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(process.env[name] || fallback);
+  return Number.isInteger(parsed) ? Math.max(minimum, Math.min(parsed, maximum)) : fallback;
+}
+
+const maxUploadBytes = boundedInteger('MAX_UPLOAD_BYTES', 25 * 1024 * 1024, 1024, 100 * 1024 * 1024);
+const maxDatasetRows = boundedInteger('MAX_DATASET_ROWS', 50_000, 1, 50_000);
+const maxDatasetColumns = boundedInteger('MAX_DATASET_COLUMNS', 500, 1, 500);
+const allowedMimeTypes = new Set([
+  'text/csv', 'text/plain', 'application/csv',
+  'application/json', 'text/json',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/octet-stream'
+]);
+
 const upload = multer({
   dest: uploadDirectory,
-  limits: { files: 1 },
+  limits: { files: 1, fileSize: maxUploadBytes, fields: 10, parts: 12 },
   fileFilter: (_req, file, cb) => {
     const lowerName = file.originalname.toLowerCase();
-    lowerName.endsWith('.csv') || lowerName.endsWith('.json') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')
+    const allowedExtension = lowerName.endsWith('.csv') || lowerName.endsWith('.json') || lowerName.endsWith('.xlsx');
+    allowedExtension && allowedMimeTypes.has(file.mimetype.toLowerCase())
       ? cb(null, true)
-      : cb(new Error('Güvenli aktarım için CSV, JSON veya Excel (XLSX/XLS) dosyası yükleyin.'));
+      : cb(new Error('Güvenli aktarım için geçerli MIME türüne sahip CSV, JSON veya XLSX dosyası yükleyin.'));
   }
 });
 
@@ -45,32 +61,48 @@ async function parseUploadedFile(file: Express.Multer.File): Promise<{
   const lowerName = file.originalname.toLowerCase();
   if (lowerName.endsWith('.json')) {
     const rawContent = (await readFile(file.path, 'utf-8')).replace(/^\uFEFF/, '');
-    if (rawContent.includes('\0')) throw new Error('Geçersiz ikili dosya içeriği.');
+    if (rawContent.includes('\0') || rawContent.includes('\uFFFD') || !/^[\s]*[\[{]/.test(rawContent)) {
+      throw new Error('Dosya uzantısı JSON olsa da içerik geçerli metin JSON biçiminde değil.');
+    }
     const normalized = jsonToCsv(rawContent);
     return { content: normalized.csv, rowCount: normalized.rowCount, columnCount: normalized.columnCount, sourceType: 'json' };
   }
-  if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
+  if (lowerName.endsWith('.xlsx')) {
     const buffer = await readFile(file.path);
-    const normalized = excelBufferToCsv(buffer);
+    const normalized = await excelBufferToCsv(buffer, { maxRows: maxDatasetRows, maxColumns: maxDatasetColumns });
     return { content: normalized.csv, rowCount: normalized.rowCount, columnCount: normalized.columnCount, sourceType: 'file' };
   }
   const rawContent = (await readFile(file.path, 'utf-8')).replace(/^\uFEFF/, '');
-  if (rawContent.includes('\0')) throw new Error('Geçersiz ikili dosya içeriği.');
+  if (rawContent.includes('\0') || rawContent.includes('\uFFFD')) throw new Error('CSV dosyası geçerli UTF-8 metin içermiyor.');
   const metadata = metadataFromContent(rawContent);
-  return { content: rawContent, ...metadata, sourceType: 'file' };
+  return { ...metadata, sourceType: 'file' };
 }
 
 function metadataFromContent(content: string) {
   const rows = parseCsv(content);
+  if (rows.length - 1 > maxDatasetRows) throw new Error(`CSV dosyası en fazla ${maxDatasetRows.toLocaleString('tr-TR')} veri satırı içerebilir.`);
+  const columnCount = rows[0]?.length ?? 0;
+  if (columnCount > maxDatasetColumns || rows.some((row) => row.length > maxDatasetColumns)) {
+    throw new Error(`CSV dosyası en fazla ${maxDatasetColumns} kolon içerebilir.`);
+  }
   return {
+    content: rows.map((row) => row.map((value) => csvCell(value)).join(',')).join('\n'),
     rowCount: Math.max(0, rows.length - 1),
-    columnCount: rows[0]?.length ?? 0
+    columnCount
   };
 }
 
 function uploadHandler(req: AuthenticatedRequest, res: Response, _next: NextFunction) {
   uploadMiddleware(req, res, async (err) => {
-    if (err) return res.status(400).json({ error: { code: 'BAD_REQUEST', message: err.message } });
+    if (err) {
+      const tooLarge = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: {
+          code: tooLarge ? 'UPLOAD_TOO_LARGE' : 'BAD_REQUEST',
+          message: tooLarge ? `Dosya en fazla ${Math.floor(maxUploadBytes / 1024 / 1024)} MiB olabilir.` : err.message
+        }
+      });
+    }
     if (!req.file) return res.status(400).json({ error: { code: 'MISSING_FILE', message: 'Lütfen bir dosya seçin.' } });
 
     const email = req.user!.email;
