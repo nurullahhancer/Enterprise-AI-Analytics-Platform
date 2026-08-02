@@ -1,9 +1,13 @@
-FROM node:22-trixie-slim AS production-dependencies
+FROM node:22-trixie-slim AS native-build-base
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM native-build-base AS production-dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-FROM node:22-trixie-slim AS build
+FROM native-build-base AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -23,7 +27,11 @@ ENV NODE_ENV=production \
     PORT=3010 \
     DB_PATH=data/reai.db
 WORKDIR /app
-RUN mkdir -p /app/data && chown node:node /app/data && chmod 700 /app/data
+RUN rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && mkdir -p /app/data \
+    && chown node:node /app/data \
+    && chmod 700 /app/data
 COPY --chown=node:node package.json ./
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist

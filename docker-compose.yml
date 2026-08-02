@@ -25,16 +25,17 @@ services:
       NODE_ENV: production
       PORT: "3010"
       DB_PATH: data/reai.db
-      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
       DATABASE_SSL: ${DATABASE_SSL:-false}
-      APP_URL: ${APP_URL:-http://localhost:3000}
+      APP_URL: ${APP_URL:?APP_URL is required and must use HTTPS}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_ISSUER: ${JWT_ISSUER:-reai-platform}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-reai-web}
-      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-}
+      JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-1800}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?DATA_ENCRYPTION_KEY is required}
       AI_PROVIDER: ${AI_PROVIDER:-auto}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       NVIDIA_AI_MODEL: ${NVIDIA_AI_MODEL:-nvidia/nemotron-3-super-120b-a12b}
@@ -44,6 +45,9 @@ services:
       AI_REQUESTS_PER_HOUR: ${AI_REQUESTS_PER_HOUR:-20}
       AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:-30000}
       AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-1024}
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-2}
+      AI_INPUT_COST_PER_MILLION_USD: ${AI_INPUT_COST_PER_MILLION_USD:-0}
+      AI_OUTPUT_COST_PER_MILLION_USD: ${AI_OUTPUT_COST_PER_MILLION_USD:-0}
       ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
@@ -55,6 +59,7 @@ services:
       CONNECTOR_SYNC_RUN_MAX: ${CONNECTOR_SYNC_RUN_MAX:-180}
       DATA_RETENTION_SCHEDULER_ENABLED: ${DATA_RETENTION_SCHEDULER_ENABLED:-true}
       ML_SERVICE_URL: http://ml-service:8000
+      ML_INTERNAL_API_KEY: ${ML_INTERNAL_API_KEY:?ML_INTERNAL_API_KEY is required}
       ML_JOB_MAX_QUEUE: ${ML_JOB_MAX_QUEUE:-50}
       ML_JOB_MAX_PER_USER: ${ML_JOB_MAX_PER_USER:-3}
       ML_JOB_MAX_RECORDS: ${ML_JOB_MAX_RECORDS:-200}
@@ -62,6 +67,9 @@ services:
       ML_JOB_TIMEOUT_MS: ${ML_JOB_TIMEOUT_MS:-60000}
       MAX_DATASET_COUNT: ${MAX_DATASET_COUNT:-50}
       MAX_DATASET_CONTEXT_CHARS: ${MAX_DATASET_CONTEXT_CHARS:-100000}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
+      MAX_DATASET_ROWS: ${MAX_DATASET_ROWS:-50000}
+      MAX_DATASET_COLUMNS: ${MAX_DATASET_COLUMNS:-500}
       DATASET_UPLOAD_TMP_DIR: /app/data/dataset-uploads
       DATASET_SCHEMA_MIN_OVERLAP: ${DATASET_SCHEMA_MIN_OVERLAP:-0.4}
       ANALYSIS_RUN_MAX_PER_ORG: ${ANALYSIS_RUN_MAX_PER_ORG:-50}
@@ -113,9 +121,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-reai}
       POSTGRES_USER: ${POSTGRES_USER:-reai_admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-before-production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:-reai_app}
-      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-change-me-before-production-app-password}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -124,7 +132,6 @@ services:
       - /run/postgresql:rw,noexec,nosuid,size=16m
     networks:
       - backend
-      - edge
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -146,9 +153,11 @@ services:
     stop_grace_period: 30s
 
   postgres-backup:
-    image: postgres:17-alpine
+    build:
+      context: ./deploy/backup
     restart: unless-stopped
     init: true
+    user: "70:70"
     read_only: true
     cap_drop:
       - ALL
@@ -157,13 +166,16 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-reai}
       POSTGRES_USER: ${POSTGRES_USER:-reai_admin}
-      PGPASSWORD: ${POSTGRES_PASSWORD:-change-me-before-production}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_BACKUP_INTERVAL_SECONDS: ${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}
       POSTGRES_BACKUP_RETENTION_DAYS: ${POSTGRES_BACKUP_RETENTION_DAYS:-14}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?BACKUP_AGE_RECIPIENT is required}
     command: ["/scripts/backup-loop.sh"]
     volumes:
       - postgres-backups:/backups
       - ./deploy/backup:/scripts:ro
+    secrets:
+      - backup_age_identity
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     networks:
@@ -171,12 +183,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /backups/last-success"]
+      interval: 5m
+      timeout: 5s
+      start_period: 2m
+      retries: 2
     mem_limit: 256m
     cpus: 0.5
 
   postgres-restore-check:
-    image: postgres:17-alpine
+    build:
+      context: ./deploy/backup
     profiles: ["maintenance"]
+    user: "70:70"
     read_only: true
     cap_drop:
       - ALL
@@ -185,12 +205,14 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-reai}
       POSTGRES_USER: ${POSTGRES_USER:-reai_admin}
-      PGPASSWORD: ${POSTGRES_PASSWORD:-change-me-before-production}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_RESTORE_CHECK_DB: reai_restore_check
     command: ["/scripts/restore-check.sh"]
     volumes:
       - postgres-backups:/backups:ro
       - ./deploy/backup:/scripts:ro
+    secrets:
+      - backup_age_identity
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     networks:
@@ -232,7 +254,7 @@ services:
       - "8000"
     environment:
       ML_CACHE_MAX_ENTRIES: ${ML_CACHE_MAX_ENTRIES:-256}
-      ML_INTERNAL_API_KEY: ${ML_INTERNAL_API_KEY:-}
+      ML_INTERNAL_API_KEY: ${ML_INTERNAL_API_KEY:?ML_INTERNAL_API_KEY is required}
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
     networks:
@@ -256,6 +278,9 @@ services:
     environment:
       NODE_ENV: test
       DB_PATH: ":memory:"
+      ML_INTERNAL_API_KEY: ci-ml-key-9F4k2L8m7Q1v6Z3p5R0x8N2w
+    networks:
+      - backend
     command: ["npm", "test"]
 
   ml-test:
@@ -264,6 +289,8 @@ services:
       context: ./ml-service
       dockerfile: Dockerfile
       target: test
+    environment:
+      ML_INTERNAL_API_KEY: ci-ml-key-9F4k2L8m7Q1v6Z3p5R0x8N2w
     command: ["sh", "-c", "ruff check app tests && pytest -q tests"]
 
   backend-test:
@@ -296,3 +323,7 @@ networks:
   edge:
   backend:
     internal: true
+
+secrets:
+  backup_age_identity:
+    file: ${BACKUP_AGE_IDENTITY_FILE:?BACKUP_AGE_IDENTITY_FILE is required}

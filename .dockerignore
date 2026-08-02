@@ -14,4 +14,7 @@ backend/**/bin
 backend/**/obj
 ml-service/**/__pycache__
 android
+.android-signing
+backups
 docs
+public/downloads/*.zip

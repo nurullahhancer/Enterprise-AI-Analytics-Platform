@@ -19,6 +19,16 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: docker compose config --quiet
+        env:
+          DATABASE_URL: postgresql://reai_app:test-only-postgres-app-password-32-chars@postgres:5432/reai
+          POSTGRES_PASSWORD: test-only-postgres-admin-password-32-chars
+          POSTGRES_APP_PASSWORD: test-only-postgres-app-password-32-chars
+          JWT_SECRET: test-only-jwt-secret-that-is-at-least-32-characters
+          DATA_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          ML_INTERNAL_API_KEY: ci-ml-key-9F4k2L8m7Q1v6Z3p5R0x8N2w
+          APP_URL: https://ci.example.test
+          BACKUP_AGE_RECIPIENT: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+          BACKUP_AGE_IDENTITY_FILE: /dev/null
 
   backend:
     runs-on: ubuntu-latest
@@ -31,6 +41,48 @@ jobs:
       - run: dotnet list backend/EnterpriseAIAnalytics.sln package --vulnerable --include-transitive
       - run: dotnet build backend/EnterpriseAIAnalytics.sln --no-restore
       - run: dotnet test backend/EnterpriseAIAnalytics.sln --no-build
+  postgres-tenant-isolation:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://reai_app:test-only-postgres-app-password-32-chars@postgres:5432/reai
+      POSTGRES_PASSWORD: test-only-postgres-admin-password-32-chars
+      POSTGRES_APP_PASSWORD: test-only-postgres-app-password-32-chars
+      JWT_SECRET: test-only-jwt-secret-that-is-at-least-32-characters
+      DATA_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      ML_INTERNAL_API_KEY: ci-ml-key-9F4k2L8m7Q1v6Z3p5R0x8N2w
+      APP_URL: https://ci.example.test
+      BACKUP_AGE_RECIPIENT: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+      BACKUP_AGE_IDENTITY_FILE: /dev/null
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --wait postgres
+      - run: docker compose --profile test build app-test
+      - run: docker compose --profile test run --rm -e DATABASE_URL="$DATABASE_URL" app-test npx vitest run server.test.ts src/lib/rls.postgres.test.ts
+      - name: Generate backup test identity
+        run: |
+          mkdir -p .ci-secrets
+          docker build -t reai-backup-keygen deploy/backup
+          docker run --rm --user 0 -v "$PWD/.ci-secrets:/keys" reai-backup-keygen age-keygen -o /keys/backup-age-key.txt
+          sudo chown 70:70 .ci-secrets/backup-age-key.txt
+          sudo chmod 0400 .ci-secrets/backup-age-key.txt
+          echo "BACKUP_AGE_RECIPIENT=$(docker run --rm --user 0 -v "$PWD/.ci-secrets:/keys:ro" reai-backup-keygen age-keygen -y /keys/backup-age-key.txt)" >> "$GITHUB_ENV"
+          echo "BACKUP_AGE_IDENTITY_FILE=$PWD/.ci-secrets/backup-age-key.txt" >> "$GITHUB_ENV"
+      - name: Verify encrypted backup and isolated restore
+        run: |
+          docker compose up -d --build postgres-backup
+          for attempt in $(seq 1 30); do
+            if docker compose logs postgres-backup | grep -q "Backup verified:"; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker compose logs postgres-backup
+              exit 1
+            fi
+            sleep 2
+          done
+          docker compose --profile maintenance run --rm postgres-restore-check
+      - if: always()
+        run: docker compose --profile test down --volumes --remove-orphans
   ml-service:
     runs-on: ubuntu-latest
     steps:
@@ -57,3 +109,50 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+
+  container-security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t reai-app:ci .
+      - run: docker build -t reai-ml:ci ml-service
+      - run: docker build -t reai-backup:ci deploy/backup
+      - name: Scan application image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: reai-app:ci
+          version: v0.72.0
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan ML image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: reai-ml:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          skip-setup-trivy: true
+      - name: Scan backup image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: reai-backup:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          skip-setup-trivy: true
+      - name: Scan repository secrets and misconfiguration
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          skip-setup-trivy: true
