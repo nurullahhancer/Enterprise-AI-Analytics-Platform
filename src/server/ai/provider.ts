@@ -248,9 +248,8 @@ export async function generateAiResponseStream(prompt: string, onChunk: (text: s
   }
 
   const response = await withRetry(() => config.provider === 'nvidia'
-    ? generateNvidiaResponseStream(prompt, config.model, () => undefined)
-    : generateGeminiResponseStream(prompt, config.model, () => undefined));
-  onChunk(response.text);
+    ? generateNvidiaResponseStream(prompt, config.model, onChunk)
+    : generateGeminiResponseStream(prompt, config.model, onChunk));
   return response;
 }
 

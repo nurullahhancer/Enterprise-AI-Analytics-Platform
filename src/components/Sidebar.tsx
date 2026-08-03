@@ -113,35 +113,35 @@ export default function Sidebar({
 
   return (
     <div className={cn(
-      "app-viewport flex w-[min(19rem,90vw)] flex-col border-r transition-colors duration-300 md:w-[18rem]",
+      "app-viewport flex w-[min(19rem,90vw)] flex-col border-r transition-colors duration-200 md:w-[17.5rem]",
       theme === 'dark' 
-        ? "bg-[#0E0E0E] text-[#F0F0F0] border-white/10" 
-        : "bg-white text-slate-800 border-slate-200"
+        ? "bg-[#0B0F17] text-slate-100 border-slate-800" 
+        : "bg-white text-slate-900 border-slate-200"
     )}>
+      {/* Brand Header */}
       <div className={cn(
-        "flex items-center justify-between border-b px-5 py-5 md:px-5",
-        theme === 'dark' ? "border-white/10" : "border-slate-100"
+        "flex items-center justify-between border-b px-5 py-4",
+        theme === 'dark' ? "border-slate-800" : "border-slate-100"
       )}>
         <div className="flex items-center gap-3">
           <div className={cn(
-            "relative flex h-11 w-11 items-center justify-center rounded-2xl shadow-lg",
-            theme === 'dark' ? "bg-[#FFD700] text-black" : "bg-[#4F46E5] text-white"
+            "flex h-9 w-9 items-center justify-center rounded-lg shadow-sm border",
+            theme === 'dark' ? "border-slate-700 bg-slate-800 text-blue-400" : "border-blue-100 bg-blue-50 text-blue-600"
           )}>
-            <Sparkles className="h-5 w-5" />
-            <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-[#0E0E0E] bg-emerald-500" aria-hidden="true" />
+            <Sparkles className="h-4 w-4" />
           </div>
           <div>
-            <div className="flex items-baseline gap-2">
-              <h1 className="text-2xl font-black tracking-tighter uppercase italic">ReAi</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-bold tracking-tight">ReAI</h1>
               <span className={cn(
-                "rounded-md px-1.5 py-0.5 text-[7px] font-black uppercase tracking-wider",
-                theme === 'dark' ? "bg-white/10 text-white/45" : "bg-slate-100 text-slate-500"
-            )}>Hazır</span>
+                "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                theme === 'dark' ? "bg-slate-800 text-slate-400 border border-slate-700" : "bg-slate-100 text-slate-500"
+              )}>Kurumsal</span>
             </div>
             <p className={cn(
-              "mt-0.5 text-[8px] font-bold uppercase tracking-[0.18em]",
-              theme === 'dark' ? "text-white/30" : "text-slate-400"
-            )}>Verilerinizi Kolayca Anlayın</p>
+              "text-xs",
+              theme === 'dark' ? "text-slate-400" : "text-slate-500"
+            )}>Veri Analiz Platformu</p>
           </div>
         </div>
         {onClose && (
@@ -150,37 +150,38 @@ export default function Sidebar({
             onClick={onClose} 
             aria-label="Uygulama menüsünü kapat"
             className={cn(
-              "flex h-11 w-11 items-center justify-center rounded-xl transition-colors md:hidden",
+              "flex h-9 w-9 items-center justify-center rounded-lg transition-colors md:hidden",
               theme === 'dark' 
-                ? "text-white/60 hover:text-white hover:bg-white/5" 
+                ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" 
                 : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
             )}
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5" />
           </button>
         )}
       </div>
 
-      <div className={cn("border-b px-4 py-4", theme === 'dark' ? "border-white/10" : "border-slate-100")}>
+      {/* Organization Switcher */}
+      <div className={cn("border-b px-4 py-3", theme === 'dark' ? "border-slate-800" : "border-slate-100")}>
         <label htmlFor="organization-switcher" className={cn(
-          "mb-2 block px-1 text-[9px] font-bold uppercase tracking-[0.22em]",
-          theme === 'dark' ? "text-white/40" : "text-slate-400"
+          "mb-1.5 block px-1 text-xs font-medium",
+          theme === 'dark' ? "text-slate-400" : "text-slate-500"
         )}>
-          Şirket veya Ekip
+          Çalışma Alanı
         </label>
         <div className="relative">
           <Building2 className={cn(
-            "pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2",
-            theme === 'dark' ? "text-[#FFD700]" : "text-[#4F46E5]"
+            "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2",
+            theme === 'dark' ? "text-slate-400" : "text-slate-500"
           )} />
           <select
             id="organization-switcher"
             value={activeOrganizationId}
             onChange={(event) => onOrganizationChange(event.target.value)}
             className={cn(
-              "min-h-12 w-full appearance-none rounded-2xl border py-2.5 pl-10 pr-9 text-xs font-bold outline-none transition-colors",
+              "min-h-10 w-full appearance-none rounded-lg border py-2 pl-9 pr-8 text-xs font-semibold outline-none transition-colors",
               theme === 'dark'
-                ? "border-white/10 bg-white/[0.055] text-white hover:bg-white/[0.08]"
+                ? "border-slate-800 bg-slate-900/80 text-slate-200 hover:bg-slate-800"
                 : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100"
             )}
           >
@@ -191,20 +192,21 @@ export default function Sidebar({
             ))}
           </select>
           <ChevronDown className={cn(
-            "pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2",
-            theme === 'dark' ? "text-white/35" : "text-slate-400"
+            "pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2",
+            theme === 'dark' ? "text-slate-400" : "text-slate-400"
           )} />
         </div>
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto px-3 py-4 md:py-5">
+      {/* Navigation Sections */}
+      <div className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
         {navSections.map((section) => (
           <section key={section.label} aria-label={section.label}>
             <p className={cn(
-              "mb-2 px-3 text-[9px] font-bold uppercase tracking-[0.24em]",
-              theme === 'dark' ? "text-white/25" : "text-slate-400"
+              "mb-2 px-2 text-xs font-semibold uppercase tracking-wider",
+              theme === 'dark' ? "text-slate-400" : "text-slate-500"
             )}>{section.label}</p>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               {section.items.map((item) => {
                 const active = currentView === item.id;
                 return (
@@ -214,38 +216,26 @@ export default function Sidebar({
                     onClick={() => handleNavClick(item.id)}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      "group relative flex min-h-14 w-full items-center gap-3 overflow-hidden rounded-2xl border px-3 py-2.5 text-left transition-all duration-200",
+                      "group relative flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
                       active
                         ? (theme === 'dark'
-                            ? "border-[#FFD700]/20 bg-[#FFD700]/10 text-white shadow-[inset_0_0_0_1px_rgba(255,215,0,0.03)]"
-                            : "border-indigo-100 bg-indigo-50 text-slate-900 shadow-sm")
+                            ? "border-blue-500/30 bg-blue-950/40 text-blue-300 font-semibold"
+                            : "border-blue-200 bg-blue-50/80 text-blue-900 font-semibold")
                         : (theme === 'dark'
-                            ? "border-transparent text-white/55 hover:bg-white/5 hover:text-white"
-                            : "border-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-900")
+                            ? "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                            : "border-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-900")
                     )}
                   >
-                    {active && (
-                      <span className={cn(
-                        "absolute inset-y-3 left-0 w-1 rounded-r-full",
-                        theme === 'dark' ? "bg-[#FFD700]" : "bg-[#4F46E5]"
-                      )} />
-                    )}
                     <span className={cn(
-                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors",
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
                       active
-                        ? (theme === 'dark' ? "bg-[#FFD700] text-black" : "bg-[#4F46E5] text-white")
-                        : (theme === 'dark' ? "bg-white/5 group-hover:bg-white/10" : "bg-slate-100 group-hover:bg-white")
+                        ? (theme === 'dark' ? "bg-blue-600 text-white" : "bg-blue-600 text-white")
+                        : (theme === 'dark' ? "bg-slate-800/70 text-slate-400 group-hover:text-slate-200" : "bg-slate-100 text-slate-500 group-hover:text-slate-700")
                     )}>
-                      <item.icon className="h-4 w-4" />
+                      <item.icon className="h-3.5 w-3.5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] font-bold">{item.label}</span>
-                      <span className={cn(
-                        "mt-0.5 block truncate text-[9px]",
-                        active
-                          ? (theme === 'dark' ? "text-white/45" : "text-indigo-500/70")
-                          : (theme === 'dark' ? "text-white/25" : "text-slate-400")
-                      )}>{item.helper}</span>
+                      <span className="block truncate text-xs font-medium">{item.label}</span>
                     </span>
                   </button>
                 );
@@ -255,9 +245,10 @@ export default function Sidebar({
         ))}
       </div>
 
+      {/* Sidebar Footer */}
       <div className={cn(
-        "border-t p-3",
-        theme === 'dark' ? "border-white/10" : "border-slate-100"
+        "border-t p-3 space-y-2",
+        theme === 'dark' ? "border-slate-800" : "border-slate-100"
       )}>
         <div className="relative">
           <div className={cn("grid gap-2", showApkDownload ? "grid-cols-3" : "grid-cols-2")}>
@@ -269,24 +260,24 @@ export default function Sidebar({
               }}
               aria-label="Bildirimleri göster"
               className={cn(
-                "relative flex min-h-11 items-center justify-center gap-2 rounded-xl border text-[10px] font-bold transition-colors",
-                theme === 'dark' ? "border-white/10 bg-white/5 text-white/65 hover:bg-white/10" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                "relative flex min-h-9 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition-colors",
+                theme === 'dark' ? "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
               )}
             >
-              <Bell className={cn("h-4 w-4", theme === 'dark' ? "text-[#FFD700]" : "text-indigo-600")} />
+              <Bell className="h-3.5 w-3.5 text-blue-500" />
               Bildirim
-              {unreadCount > 0 && <span className="absolute right-2 top-1.5 min-w-4 rounded-full bg-rose-600 px-1 text-center text-[8px] leading-4 text-white">{unreadCount}</span>}
+              {unreadCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white">{unreadCount}</span>}
             </button>
             <button
               type="button"
               onClick={onToggleTheme}
               aria-label={theme === 'dark' ? 'Açık görünüme geç' : 'Koyu görünüme geç'}
               className={cn(
-                "flex min-h-11 items-center justify-center gap-2 rounded-xl border text-[10px] font-bold transition-colors",
-                theme === 'dark' ? "border-white/10 bg-white/5 text-white/65 hover:bg-white/10" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                "flex min-h-9 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition-colors",
+                theme === 'dark' ? "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
               )}
             >
-              {theme === 'dark' ? <Sun className="h-4 w-4 text-[#FFD700]" /> : <Moon className="h-4 w-4 text-indigo-600" />}
+              {theme === 'dark' ? <Sun className="h-3.5 w-3.5 text-amber-400" /> : <Moon className="h-3.5 w-3.5 text-slate-600" />}
               Görünüm
             </button>
             {showApkDownload && (
@@ -295,48 +286,48 @@ export default function Sidebar({
                 download
                 aria-label="Android uygulamasını indir"
                 className={cn(
-                  "flex min-h-11 items-center justify-center gap-2 rounded-xl border text-[10px] font-bold transition-colors",
-                  theme === 'dark' ? "border-white/10 bg-white/5 text-white/65 hover:bg-white/10" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  "flex min-h-9 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition-colors",
+                  theme === 'dark' ? "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                 )}
               >
-                <Download className={cn("h-4 w-4", theme === 'dark' ? "text-[#FFD700]" : "text-indigo-600")} />
-                Uygulama
+                <Download className="h-3.5 w-3.5 text-blue-500" />
+                APK
               </a>
             )}
           </div>
 
           {showNotifications && (
             <div className={cn(
-              "absolute bottom-full left-0 right-0 z-50 mb-2 max-h-72 space-y-2 overflow-y-auto rounded-2xl border p-4 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-150",
-              theme === 'dark' ? "border-white/10 bg-[#151515] text-white" : "border-slate-200 bg-white text-slate-800"
+              "absolute bottom-full left-0 right-0 z-50 mb-2 max-h-64 space-y-2 overflow-y-auto rounded-xl border p-4 shadow-xl",
+              theme === 'dark' ? "border-slate-800 bg-[#111827] text-slate-200" : "border-slate-200 bg-white text-slate-800"
             )}>
-              <div className={cn("flex items-center justify-between border-b pb-2", theme === 'dark' ? "border-white/10" : "border-slate-100")}>
+              <div className={cn("flex items-center justify-between border-b pb-2", theme === 'dark' ? "border-slate-800" : "border-slate-100")}>
                 <span className="text-xs font-bold">Bildirimler</span>
-                <button type="button" onClick={() => setShowNotifications(false)} className="min-h-9 px-2 text-[10px] font-bold opacity-50 hover:opacity-100">Kapat</button>
+                <button type="button" onClick={() => setShowNotifications(false)} className="text-xs text-slate-400 hover:text-slate-200">Kapat</button>
               </div>
-              <div className={cn("divide-y", theme === 'dark' ? "divide-white/5" : "divide-slate-100")}>
+              <div className={cn("divide-y", theme === 'dark' ? "divide-slate-800" : "divide-slate-100")}>
                 {notifications.slice(0, 5).map((notification) => (
                   <div key={notification.id} className="py-2 first:pt-0 last:pb-0">
-                    <p className="text-[11px] font-bold">{notification.title}</p>
-                    <p className="mt-0.5 text-[10px] leading-4 opacity-60">{notification.message}</p>
+                    <p className="text-xs font-semibold">{notification.title}</p>
+                    <p className="mt-0.5 text-xs opacity-70">{notification.message}</p>
                   </div>
                 ))}
-                {notifications.length === 0 && <p className="py-4 text-center text-[10px] opacity-45">Yeni bildiriminiz yok.</p>}
+                {notifications.length === 0 && <p className="py-3 text-center text-xs text-slate-400">Yeni bildirim yok.</p>}
               </div>
             </div>
           )}
         </div>
 
         <div className={cn(
-          "mt-2 flex items-center gap-3 rounded-2xl border p-2.5",
-          theme === 'dark' ? "border-white/10 bg-white/[0.04]" : "border-slate-200 bg-slate-50"
+          "flex items-center gap-2.5 rounded-lg border p-2",
+          theme === 'dark' ? "border-slate-800 bg-slate-900/60" : "border-slate-200 bg-slate-50"
         )}>
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-500 text-sm font-black text-white shadow-sm">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white shadow-sm">
             {user.name.charAt(0).toLocaleUpperCase('tr-TR')}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-bold">{user.name}</p>
-            <p className="mt-0.5 truncate text-[9px] opacity-45">{roleLabel} · {user.email}</p>
+            <p className="truncate text-xs font-semibold">{user.name}</p>
+            <p className="truncate text-[11px] text-slate-400">{roleLabel}</p>
           </div>
           <button
             type="button"
@@ -347,8 +338,8 @@ export default function Sidebar({
             aria-label="Hesaptan çıkış yap"
             title="Çıkış yap"
             className={cn(
-              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors",
-              theme === 'dark' ? "text-white/40 hover:bg-white/10 hover:text-white" : "text-slate-400 hover:bg-white hover:text-rose-600"
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
+              theme === 'dark' ? "text-slate-400 hover:bg-slate-800 hover:text-slate-200" : "text-slate-400 hover:bg-slate-200 hover:text-rose-600"
             )}
           >
             <LogOut className="h-4 w-4" />

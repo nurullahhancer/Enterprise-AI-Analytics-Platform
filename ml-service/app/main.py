@@ -687,3 +687,27 @@ def log_experiment(
             mlflow.log_metrics(metrics)
     except Exception as exc:
         logger.warning("MLflow logging failed", extra={"error_type": type(exc).__name__})
+
+
+# ── E-Commerce & Accounting DSS Endpoints ────────────────────────────────────
+
+@app.post("/predict/stockout", dependencies=[Depends(require_internal_api_key)])
+async def predict_stockout(payload: dict = Body(...)):
+    from app.ecom_analytics import analyze_ecom_stockout
+    sku_data = payload.get("sku_data", [])
+    return analyze_ecom_stockout(sku_data)
+
+
+@app.post("/predict/cashflow", dependencies=[Depends(require_internal_api_key)])
+async def predict_cashflow(payload: dict = Body(...)):
+    from app.ecom_analytics import analyze_cash_flow_forecast
+    financial_records = payload.get("financial_records", [])
+    return analyze_cash_flow_forecast(financial_records)
+
+
+@app.post("/nlp/reviews", dependencies=[Depends(require_internal_api_key)])
+async def analyze_reviews(payload: dict = Body(...)):
+    from app.ecom_analytics import analyze_customer_reviews_nlp
+    reviews = payload.get("reviews", [])
+    return analyze_customer_reviews_nlp(reviews)
+

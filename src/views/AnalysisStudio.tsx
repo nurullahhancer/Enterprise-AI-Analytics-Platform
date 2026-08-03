@@ -674,24 +674,24 @@ export default function AnalysisStudio({
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/5 md:p-6">
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#151E2E] md:p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-600 dark:text-[#FFD700]">
+            <div className="flex items-center gap-2 text-xs font-semibold text-blue-600 dark:text-blue-400">
               <Sparkles className="h-4 w-4" />
-              Geleceğe daha hazırlıklı olun
+              Gelecek Dönem Analizi
             </div>
-            <h3 className="mt-2 text-xl font-bold text-slate-900 dark:text-white md:text-2xl">Gelecek Tahmini</h3>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-white/50">
-              Neyi merak ettiğinizi seçin. Beklenen sonucu, hangi tarihler için geçerli olduğunu ve ne yapabileceğinizi açıkça gösterelim.
+            <h3 className="mt-1.5 text-xl font-bold text-slate-900 dark:text-slate-100 md:text-2xl">Gelecek Tahmini</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500 dark:text-slate-400">
+              Tahmin etmek istediğiniz iş metriğini ve dönem sayısını seçin. Model beklenen tutarları ve güven aralığını doğrudan hesaplayacaktır.
             </p>
             {profile && (
-              <p className="mt-3 text-xs text-slate-400 dark:text-white/35">
-                {datasetFilename || 'Birlikte incelenen veriler'} · {datasetCount === undefined ? 'Kaynak sayısı bilinmiyor' : `${datasetCount} veri kaynağı`} · {profile.rowCount.toLocaleString('tr-TR')} kayıt · Tahmin edilebilecek {numericColumns.length} bilgi
+              <p className="mt-2.5 text-xs text-slate-400 dark:text-slate-500">
+                {datasetFilename || 'Veri seti'} · {datasetCount === undefined ? '1 kaynak' : `${datasetCount} veri kaynağı`} · {profile.rowCount.toLocaleString('tr-TR')} satır
               </p>
             )}
             {useCasePresets.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2" aria-label="Hazır analiz şablonları">
+              <div className="mt-3.5 flex flex-wrap gap-2" aria-label="Hazır analiz şablonları">
                 {useCasePresets.map((preset) => (
                   <button
                     key={preset.key}
@@ -699,10 +699,10 @@ export default function AnalysisStudio({
                     disabled={isRunning}
                     onClick={() => setTargetColumn(preset.column.name)}
                     className={cn(
-                      'rounded-full border px-3 py-1.5 text-[10px] font-bold transition-colors',
+                      'rounded-md border px-3 py-1 text-xs font-medium transition-colors',
                       targetColumn === preset.column.name
-                        ? 'border-indigo-600 bg-indigo-600 text-white dark:border-[#FFD700] dark:bg-[#FFD700] dark:text-black'
-                        : 'border-slate-200 text-slate-600 hover:border-indigo-300 dark:border-white/10 dark:text-white/55 dark:hover:border-[#FFD700]/40',
+                        ? 'border-blue-600 bg-blue-600 text-white'
+                        : 'border-slate-200 text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600',
                     )}
                   >
                   {preset.label}
@@ -712,30 +712,30 @@ export default function AnalysisStudio({
             )}
           </div>
 
-          <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_150px_auto] lg:max-w-3xl">
+          <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto] lg:max-w-2xl">
             <label className="block min-w-0">
-              <span className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-white/45">Neyi tahmin edelim?</span>
+              <span className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Tahmin Edilecek Alan</span>
               <select
                 value={targetColumn}
                 onChange={(event) => setTargetColumn(event.target.value)}
                 disabled={isRunning || numericColumns.length === 0}
-                className="min-h-11 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-45 dark:border-white/10 dark:bg-[#171717] dark:text-white dark:focus:border-[#FFD700]"
+                className="min-h-10 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs font-semibold text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
               >
-                {numericColumns.length === 0 && <option value="">Tahmin edilebilecek bilgi yok</option>}
+                {numericColumns.length === 0 && <option value="">Tahmin edilecek alan yok</option>}
                 {numericColumns.map((column) => <option key={column.name} value={column.name}>{friendlyTargetLabel(column.name)}</option>)}
               </select>
             </label>
 
             <label className="block">
-              <span className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-white/45">Ne kadar ileri bakalım?</span>
+              <span className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Dönem Sayısı</span>
               <select
                 value={periods}
                 onChange={(event) => setPeriods(Number(event.target.value))}
                 disabled={isRunning}
-                className="min-h-11 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-45 dark:border-white/10 dark:bg-[#171717] dark:text-white dark:focus:border-[#FFD700]"
+                className="min-h-10 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs font-semibold text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
               >
                 {Array.from({ length: 12 }, (_, index) => index + 1).map((period) => (
-                  <option key={period} value={period}>{period} adım</option>
+                  <option key={period} value={period}>{period} dönem</option>
                 ))}
               </select>
             </label>
@@ -744,40 +744,39 @@ export default function AnalysisStudio({
               type="button"
               onClick={() => void runAnalysis()}
               disabled={!profile || !targetColumn || isRunning}
-              className="inline-flex min-h-11 items-center justify-center gap-2 self-end rounded-xl bg-indigo-600 px-5 text-xs font-bold uppercase tracking-wider text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-[#FFD700] dark:text-black dark:hover:bg-[#ffe24d]"
+              className="inline-flex min-h-10 items-center justify-center gap-2 self-end rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40 shadow-sm"
             >
               {isRunning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              {isRunning ? 'Hazırlanıyor' : 'Tahmini Hesapla'}
+              {isRunning ? 'Hesaplanıyor' : 'Tahmin Oluştur'}
             </button>
           </div>
         </div>
-        <p className="mt-3 text-[11px] leading-5 text-slate-400 dark:text-white/35">Bir adım, dosyanızdaki tarih düzenine göre bir gün, hafta veya ayı ifade eder. Sonuç ekranında gerçek tarih aralığı gösterilir.</p>
       </section>
 
       {!profile && (
-        <div className="flex min-h-56 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 text-center dark:border-white/10 dark:bg-white/5">
-          <FileSearch className="h-9 w-9 text-slate-300 dark:text-white/20" />
-          <p className="mt-4 text-sm font-bold text-slate-800 dark:text-white">Tahmin için veri bulunamadı</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-white/40">Önce Verilerim bölümünden bir dosya yükleyin.</p>
+        <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white px-6 text-center dark:border-slate-800 dark:bg-[#151E2E]">
+          <FileSearch className="h-8 w-8 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Tahmin için henüz veri bulunmuyor</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Başlamak için Veri Yönetimi ekranından dosya yükleyin.</p>
         </div>
       )}
 
       {profile && numericColumns.length === 0 && (
-        <div role="alert" className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+        <div role="alert" className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          Bu dosyada tahmin edilebilecek sayısal bir bilgi bulunamadı. Satış adedi, satış tutarı veya ciro gibi bir sütun içeren dosya yükleyin.
+          Bu dosyada tahmin edilebilecek sayısal bir alan bulunamadı. Satış, ciro veya adet içeren bir dosya yükleyin.
         </div>
       )}
 
       {isRunning && (
-        <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10 dark:text-[#FFD700]">
+        <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-medium text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-300">
           <LoaderCircle className="h-4 w-4 animate-spin" />
-          {jobState === 'running' ? 'Veriler inceleniyor ve gelecek tahmini hazırlanıyor…' : jobState === 'queued' ? 'Tahmininiz sıraya alındı…' : 'Sonuçlar hazırlanıyor…'}
+          {jobState === 'running' ? 'Veriler inceleniyor ve tahminler hazırlanıyor…' : jobState === 'queued' ? 'Tahmin işi sıraya alındı…' : 'Sonuçlar hazırlanıyor…'}
         </div>
       )}
 
       {error && (
-        <div role="alert" className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+        <div role="alert" className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
         </div>
@@ -785,7 +784,7 @@ export default function AnalysisStudio({
 
       {actionNotice && (
         <div role={actionNotice.type === 'error' ? 'alert' : 'status'} className={cn(
-          'flex items-start gap-3 rounded-xl border px-4 py-3 text-sm',
+          'flex items-start gap-3 rounded-lg border px-4 py-3 text-xs font-medium',
           actionNotice.type === 'error'
             ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300'
             : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300',
@@ -797,15 +796,15 @@ export default function AnalysisStudio({
 
       {result && (
         <>
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/5 md:p-6">
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#151E2E] md:p-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">Tahmin Sonucunuz</h3>
-                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">Hazır</span>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Tahmin Özeti</h3>
+                  <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-950/30 dark:text-emerald-400">Tamamlandı</span>
                 </div>
-                <p className="mt-2 text-sm text-slate-500 dark:text-white/50">
-                  {result.datasetFilename || 'İncelenen veriler'} · {result.datasetCount === undefined ? 'Tek veri kaynağı' : `${result.datasetCount} veri kaynağı`} · Tahmin edilen: <strong className="text-slate-800 dark:text-white">{friendlyTargetLabel(result.targetColumn || targetColumn)}</strong>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {result.datasetFilename || 'Veri seti'} · Tahmin edilen alan: <strong className="text-slate-800 dark:text-slate-200">{friendlyTargetLabel(result.targetColumn || targetColumn)}</strong>
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -813,65 +812,60 @@ export default function AnalysisStudio({
                   type="button"
                   onClick={() => void interpretAnalysis()}
                   disabled={!result.analysisRunId || isInterpreting}
-                  title={!result.analysisRunId ? 'Bu sonuç için açıklama oluşturulamıyor' : undefined}
-                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-[#FFD700] dark:text-black dark:hover:bg-[#ffe24d]"
+                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3.5 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {isInterpreting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  {isInterpreting ? 'Hazırlanıyor' : interpretation ? 'İş Önerisini Yenile' : 'İş İçin Öneri Al'}
+                  {isInterpreting ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  {isInterpreting ? 'Yorumlanıyor' : interpretation ? 'Yorumu Yenile' : 'Analiz Yorumu Al'}
                 </button>
                 <button
                   type="button"
                   onClick={() => void downloadAnalysisReport()}
                   disabled={!result.analysisRunId || isDownloading}
-                  title={!result.analysisRunId ? 'Bu sonuç için rapor oluşturulamıyor' : undefined}
-                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/15 dark:text-white/75 dark:hover:bg-white/10"
+                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-slate-300 px-3.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
-                  {isDownloading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  {isDownloading ? 'Hazırlanıyor' : 'Raporu İndir'}
+                  {isDownloading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                  {isDownloading ? 'İndiriliyor' : 'Raporu İndir'}
                 </button>
               </div>
             </div>
 
             {businessForecast ? (
-              <div className="mt-6 overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-5 dark:border-[#FFD700]/20 dark:from-[#FFD700]/10 dark:via-white/[0.03] dark:to-emerald-500/10 md:p-6">
+              <div className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800 dark:bg-slate-900/40">
                 <div className="flex items-start gap-3">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:bg-[#FFD700] dark:text-black dark:shadow-none">
-                    {businessForecast.trend === 'up' ? <TrendingUp className="h-5 w-5" /> : businessForecast.trend === 'down' ? <TrendingDown className="h-5 w-5" /> : <Minus className="h-5 w-5" />}
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
+                    {businessForecast.trend === 'up' ? <TrendingUp className="h-4 w-4" /> : businessForecast.trend === 'down' ? <TrendingDown className="h-4 w-4" /> : <Minus className="h-4 w-4" />}
                   </span>
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-600 dark:text-[#FFD700]">Kısa cevap</p>
-                    <h2 className="mt-1 max-w-4xl text-xl font-black leading-snug text-slate-900 dark:text-white md:text-2xl">{businessForecast.headline}</h2>
+                    <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">Özet İçgörü</p>
+                    <h2 className="mt-1 max-w-4xl text-base font-bold leading-snug text-slate-900 dark:text-slate-100 md:text-lg">{businessForecast.headline}</h2>
                   </div>
                 </div>
 
-                <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border border-white bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-black/20">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{businessForecast.valueLabel}</p>
-                    <p className="mt-2 text-2xl font-black text-slate-900 dark:text-white">{businessForecast.value}</p>
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{businessForecast.valueLabel}</p>
+                    <p className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">{businessForecast.value}</p>
                   </div>
-                  <div className="rounded-xl border border-white bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-black/20">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Değişimin yönü</p>
-                    <p className={cn('mt-2 text-base font-black', businessForecast.trend === 'up' ? 'text-emerald-600 dark:text-emerald-400' : businessForecast.trend === 'down' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-white')}>{businessForecast.trendLabel}</p>
-                    <p className="mt-1 text-[10px] leading-4 text-slate-500 dark:text-white/45">{businessForecast.trendDetail}</p>
+                  <div className="rounded-lg border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Değişim Yönü</p>
+                    <p className={cn('mt-1 text-sm font-bold', businessForecast.trend === 'up' ? 'text-emerald-600 dark:text-emerald-400' : businessForecast.trend === 'down' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300')}>{businessForecast.trendLabel}</p>
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{businessForecast.trendDetail}</p>
                   </div>
-                  <div className="rounded-xl border border-white bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-black/20">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Olası sonuç aralığı</p>
-                    <p className="mt-2 text-lg font-black text-slate-900 dark:text-white">{businessForecast.range}</p>
-                    <p className="mt-1 text-[10px] leading-4 text-slate-500 dark:text-white/45">Gerçek sonuçlar kampanya, fiyat ve stok gibi değişikliklerden etkilenebilir.</p>
+                  <div className="rounded-lg border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Tahmin Güven Aralığı</p>
+                    <p className="mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">{businessForecast.range}</p>
                   </div>
                 </div>
 
-                <div className="mt-4 flex items-start gap-3 rounded-xl bg-indigo-600 px-4 py-3 text-white dark:bg-[#FFD700] dark:text-black">
-                  <Lightbulb className="mt-0.5 h-5 w-5 shrink-0" />
+                <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-blue-100 bg-blue-50/70 p-3.5 text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
+                  <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-wider opacity-70">Önerilen adım</p>
-                    <p className="mt-1 text-sm font-semibold leading-5">{businessForecast.action}</p>
+                    <p className="text-xs font-bold">Aksiyon Önerisi</p>
+                    <p className="mt-0.5 text-xs leading-5">{businessForecast.action}</p>
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="mt-6 rounded-xl border border-dashed border-slate-300 px-5 py-8 text-center text-sm text-slate-500 dark:border-white/10 dark:text-white/40">Gelecek dönemlere ait yeterli sonuç üretilemedi.</div>
-            )}
+            ) : null}
 
             <details className="group mt-5 rounded-xl border border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-black/20">
               <summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold text-slate-600 marker:hidden dark:text-white/60">

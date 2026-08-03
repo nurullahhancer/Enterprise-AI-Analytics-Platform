@@ -14,7 +14,9 @@ const BUSINESS_TABLES = [
   'organization_data_policies',
   'analysis_runs',
   'kpi_definitions',
-  'kpi_evaluations'
+  'kpi_evaluations',
+  'chat_sessions',
+  'chat_messages'
 ] as const;
 
 const SAAS_TENANT_TABLES = [
@@ -279,6 +281,28 @@ async function createCoreTables(transaction: QueryExecutor): Promise<void> {
       row_count INTEGER NOT NULL DEFAULT 0,
       message TEXT NOT NULL,
       evaluated_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await transaction.run(`
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT REFERENCES saas_organizations(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'dataset',
+      created_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await transaction.run(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+      organization_id TEXT REFERENCES saas_organizations(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      created_at ${timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 

@@ -25,6 +25,9 @@ frontend/.next/
 *.sqlite
 *.sqlite3
 backups/
+data/
+secrets/
+
 
 # Logs and OS/editor noise
 *.log

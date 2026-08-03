@@ -92,19 +92,19 @@ function WidgetShell({
   description?: string;
 }) {
   return (
-    <section className="bg-white dark:bg-white/5 border border-slate-200/60 dark:border-white/5 rounded-2xl p-5 shadow-sm min-w-0">
+    <section className="interactive-card animate-fade-in-up bg-white dark:bg-[#151E2E] border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm min-w-0 transition-all">
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
-          <h3 className="text-sm md:text-base font-bold text-slate-800 dark:text-[#F0F0F0] truncate uppercase tracking-tight">{widget.title}</h3>
+          <h3 className="text-sm md:text-base font-semibold text-slate-900 dark:text-slate-100 truncate">{widget.title}</h3>
           {description ? (
-            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500 dark:text-white/50">{description}</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{description}</p>
           ) : (
-            <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-white/40 mt-1">ÖNCELİK SKORU: {Math.round(widget.score * 100)}</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Öncelik seviyesi: %{Math.round(widget.score * 100)}</p>
           )}
         </div>
         {widget.confidence !== undefined && (
-          <span className="shrink-0 px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-[#FFD700]/10 text-indigo-600 dark:text-[#FFD700] border border-indigo-100 dark:border-[#FFD700]/20 text-[10px] font-bold uppercase tracking-wider">
-            {confidenceLabel(widget.confidence)}
+          <span className="shrink-0 px-2.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-800/40 text-xs font-medium">
+            %{Math.round((widget.confidence ?? 0) * 100)} Uyum
           </span>
         )}
       </div>
@@ -116,15 +116,15 @@ function WidgetShell({
 function KpiWidget({ widget, isDark }: { widget: DashboardWidget; isDark: boolean }) {
   return (
     <WidgetShell widget={widget} isDark={isDark}>
-      <div className="flex items-center justify-between gap-4 py-2">
+      <div className="flex items-center justify-between gap-4 py-1">
         <div>
-          <p className="text-3xl font-black tracking-tight text-indigo-600 dark:text-[#FFD700]">
+          <p className="text-2xl md:text-3xl font-bold tracking-tight text-blue-600 dark:text-blue-400">
             {formatValue(Number(widget.data.value ?? 0), widget.data.format)}
           </p>
-          <p className="text-xs font-medium text-slate-500 dark:text-white/45 mt-2 uppercase tracking-wide">{widget.data.helper}</p>
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1">{widget.data.helper}</p>
         </div>
-        <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-white/5 border border-indigo-100 dark:border-white/10 flex items-center justify-center">
-          <Activity className="w-5 h-5 text-indigo-600 dark:text-[#FFD700]" />
+        <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-slate-800 border border-blue-100 dark:border-slate-700 flex items-center justify-center">
+          <Activity className="w-5 h-5 text-blue-600 dark:text-blue-400" />
         </div>
       </div>
     </WidgetShell>
@@ -133,28 +133,28 @@ function KpiWidget({ widget, isDark }: { widget: DashboardWidget; isDark: boolea
 
 function TrendWidget({ widget, isDark }: { widget: DashboardWidget; isDark: boolean }) {
   const data = Array.isArray(widget.data) && widget.data.length > 0 ? widget.data : [{ name: 'Veri yok', ciro: 0 }];
-  const accentColor = isDark ? "#FFD700" : "#4F46E5";
-  const gridColor = isDark ? "#222" : "#E2E8F0";
+  const accentColor = isDark ? "#3B82F6" : "#2563EB";
+  const gridColor = isDark ? "rgba(255,255,255,0.06)" : "#F1F5F9";
   const tooltipStyle = isDark 
-    ? { backgroundColor: '#111', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px' }
-    : { backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', color: '#000', fontSize: '12px' };
+    ? { backgroundColor: '#111827', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', color: '#F1F5F9', fontSize: '12px' }
+    : { backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #E2E8F0', color: '#0F172A', fontSize: '12px' };
 
   return (
     <WidgetShell widget={widget} isDark={isDark}>
-      <div className="h-[260px] md:h-[300px]">
+      <div className="h-[240px] md:h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
             <defs>
               <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={accentColor} stopOpacity={0.3} />
+                <stop offset="5%" stopColor={accentColor} stopOpacity={0.2} />
                 <stop offset="95%" stopColor={accentColor} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
-            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: isDark ? '#888' : '#64748B', fontSize: 10 }} />
-            <YAxis axisLine={false} tickLine={false} tick={{ fill: isDark ? '#888' : '#64748B', fontSize: 10 }} />
+            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: isDark ? '#94A3B8' : '#64748B', fontSize: 11 }} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fill: isDark ? '#94A3B8' : '#64748B', fontSize: 11 }} />
             <Tooltip contentStyle={tooltipStyle} />
-            <Area type="monotone" dataKey="ciro" stroke={accentColor} strokeWidth={3} fill="url(#trendGrad)" />
+            <Area type="monotone" dataKey="ciro" stroke={accentColor} strokeWidth={2.5} fill="url(#trendGrad)" />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -167,28 +167,28 @@ function ForecastWidget({ widget, isDark }: { widget: DashboardWidget; isDark: b
   const expectedTotal = points.reduce((sum: number, point: any) => sum + Number(point.predicted ?? 0), 0);
   return (
     <WidgetShell widget={widget} isDark={isDark}>
-      <div className="mb-4 flex flex-col gap-1 text-xs font-bold text-slate-500 dark:text-white/60">
-        <div className="flex items-center gap-3">
-          <Brain className="w-4 h-4 text-indigo-600 dark:text-[#FFD700]" />
-          <span>{widget.data.targetColumn || 'Tahmin edilecek bilgi seçilmedi'}</span>
+      <div className="mb-3 flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
+        <div className="flex items-center gap-2">
+          <Brain className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+          <span className="font-semibold">{widget.data.targetColumn || 'Tahmin Alanı'}</span>
         </div>
-        {points.length > 0 && <div className="pl-7 text-sm text-slate-800 dark:text-white">Önümüzdeki {points.length} dönemde yaklaşık {formatMoney(expectedTotal)} bekleniyor.</div>}
+        {points.length > 0 && <div className="pl-6 text-xs text-slate-700 dark:text-slate-200">Önümüzdeki {points.length} dönemde beklenen toplam: <strong className="text-blue-600 dark:text-blue-400">{formatMoney(expectedTotal)}</strong></div>}
       </div>
       {widget.data.debug?.rmseIsSuspicious && (
-        <div className="mb-4 rounded-xl border border-pink-500/20 bg-pink-500/10 px-3 py-2 text-xs font-bold text-pink-200">
-          Geçmiş kayıtlar çok benzer olduğu için bu tahmini temkinli değerlendirin.
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+          Geçmiş veriler yüksek benzerlik gösterdiği için tahmini dengeli değerlendirin.
         </div>
       )}
       {points.length === 0 && (
-        <div className="mb-4 rounded-xl border border-slate-100 dark:border-white/10 bg-slate-50 dark:bg-white/5 px-3 py-2 text-xs font-bold text-slate-500 dark:text-white/70">
-          Tahmin oluşturmak için en az 3 geçmiş sayısal değer gerekiyor.
+        <div className="mb-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+          Tahmin oluşturmak için en az 3 dönem geçmiş veri gereklidir.
         </div>
       )}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
         {points.map((p: any) => (
-          <div key={p.row} className="rounded-xl bg-slate-50 dark:bg-black/30 border border-slate-200/50 dark:border-white/5 p-3">
-            <p className="text-[10px] font-mono uppercase text-slate-400 dark:text-white/40">{p.row}</p>
-            <p className="text-lg font-black text-indigo-600 dark:text-[#FFD700] mt-1">{formatMoney(Number(p.predicted ?? 0))}</p>
+          <div key={p.row} className="rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200/60 dark:border-slate-800 p-3">
+            <p className="text-xs text-slate-400">{p.row}</p>
+            <p className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5">{formatMoney(Number(p.predicted ?? 0))}</p>
           </div>
         ))}
       </div>
@@ -200,15 +200,15 @@ function AnomalyWidget({ widget, isDark }: { widget: DashboardWidget; isDark: bo
   const anomalies = widget.data.data ?? [];
   return (
     <WidgetShell widget={widget} isDark={isDark}>
-      <div className="flex items-center gap-3 text-pink-500 mb-4">
-        <AlertTriangle className="w-5 h-5" />
-        <p className="text-sm font-bold">{anomalies.length} aykırı değer bulundu.</p>
+      <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 mb-3">
+        <AlertTriangle className="w-4 h-4" />
+        <p className="text-xs font-semibold">{anomalies.length} adet alışılmadık değişim tespit edildi.</p>
       </div>
       <div className="space-y-2">
         {anomalies.slice(0, 4).map((item: any) => (
-          <div key={item.label} className="flex items-center justify-between gap-3 text-sm rounded-xl bg-pink-500/5 dark:bg-pink-500/10 border border-pink-500/20 px-3 py-2 text-slate-800 dark:text-[#F0F0F0]">
+          <div key={item.label} className="flex items-center justify-between gap-3 text-xs rounded-lg bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 px-3 py-2 text-slate-800 dark:text-slate-200">
             <span className="truncate">{item.label}</span>
-            <strong className="text-pink-600 dark:text-pink-400">{formatMoney(Number(item.value ?? 0))}</strong>
+            <strong className="text-rose-600 dark:text-rose-400">{formatMoney(Number(item.value ?? 0))}</strong>
           </div>
         ))}
       </div>
@@ -657,53 +657,50 @@ export default function Dashboard() {
   const toggleInsightDetail = (title: string) => setExpandedInsights((cur) => ({ ...cur, [title]: !cur[title] }));
 
   return (
-    <div className="p-4 md:p-12 flex-1 flex flex-col gap-4 md:gap-8 overflow-y-auto">
+    <div className="p-4 md:p-8 flex-1 flex flex-col gap-4 md:gap-6 overflow-y-auto">
       {/* Header */}
       <div className={cn(
-        "flex flex-col lg:flex-row lg:justify-between lg:items-end pb-5 gap-4 border-b",
-        isDark ? "border-white/5" : "border-slate-200"
+        "flex flex-col lg:flex-row lg:justify-between lg:items-center pb-5 gap-4 border-b",
+        isDark ? "border-slate-800" : "border-slate-200"
       )}>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <div className={cn(
-            "w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg rotate-[-4deg] shrink-0",
-            isDark ? "bg-[#FFD700] shadow-[#FFD700]/10" : "bg-[#4F46E5] shadow-[#4F46E5]/15"
+            "w-10 h-10 rounded-xl flex items-center justify-center border shadow-sm shrink-0",
+            isDark ? "bg-slate-800 border-slate-700 text-blue-400" : "bg-blue-50 border-blue-100 text-blue-600"
           )}>
-            <div className={cn(
-              "w-5 h-5 rounded-full shadow-inner",
-              isDark ? "bg-black" : "bg-white"
-            )} />
+            <BarChart3 className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">
-              <span>Re</span><span className={isDark ? "text-[#FFD700]" : "text-[#4F46E5]"}>AI</span> Analiz Paneli
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+              Analiz ve İçgörüler
             </h2>
             {dashboard.datasetFilename && (
-              <p className="text-xs font-mono text-slate-400 dark:text-white/40 mt-1 truncate max-w-md">
-                İncelenen veriler: {dashboard.datasetFilename}
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate max-w-md">
+                Veri kaynağı: <span className="font-semibold">{dashboard.datasetFilename}</span>
               </p>
             )}
             {dashboard.template && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-indigo-700 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/10 dark:text-[#FFD700]">{dashboard.template.label} şablonu</span>
-                <span className="text-[10px] text-slate-400 dark:text-white/35">{dashboard.template.reason}</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">{dashboard.template.label}</span>
+                <span className="text-xs text-slate-400">{dashboard.template.reason}</span>
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Sub-tab selection */}
           <div className={cn(
-            "flex items-center p-1 rounded-xl border",
-            isDark ? "bg-white/5 border-white/5" : "bg-slate-100 border-slate-200"
+            "flex items-center p-1 rounded-lg border",
+            isDark ? "bg-slate-900 border-slate-800" : "bg-slate-100 border-slate-200"
           )}>
             <button
               onClick={() => setSubTab('overview')}
               className={cn(
-                "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all",
+                "px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all",
                 subTab === 'overview'
-                  ? (isDark ? "bg-white/10 text-white shadow-sm" : "bg-white text-slate-800 shadow-sm")
-                  : "text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white"
+                  ? (isDark ? "bg-slate-800 text-white shadow-sm" : "bg-white text-slate-900 shadow-sm")
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               )}
             >
               Genel Özet
@@ -711,10 +708,10 @@ export default function Dashboard() {
             <button
               onClick={() => setSubTab('forecast')}
               className={cn(
-                "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all",
+                "px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all",
                 subTab === 'forecast'
-                  ? (isDark ? "bg-white/10 text-white shadow-sm" : "bg-white text-slate-800 shadow-sm")
-                  : "text-slate-500 dark:text-white/40 hover:text-slate-800 dark:hover:text-white"
+                  ? (isDark ? "bg-slate-800 text-white shadow-sm" : "bg-white text-slate-900 shadow-sm")
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               )}
             >
               Gelecek Tahmini
@@ -725,16 +722,16 @@ export default function Dashboard() {
             <button
               onClick={() => setIsEditMode(!isEditMode)}
               className={cn(
-                "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-95 shadow-sm border",
+                "px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 border",
                 isEditMode
-                  ? "bg-rose-500/10 border-rose-500/20 text-rose-500 hover:bg-rose-500/20"
+                  ? "bg-rose-50 border-rose-200 text-rose-600 dark:bg-rose-950/30 dark:border-rose-900/40 dark:text-rose-400"
                   : (isDark
-                      ? "border-white/10 hover:bg-white hover:text-black text-white"
-                      : "border-slate-300 hover:bg-slate-50 text-slate-700")
+                      ? "border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300"
+                      : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700")
               )}
             >
-              <TrendingUp className="w-4 h-4 shrink-0" />
-              {isEditMode ? 'Düzenlemeyi Bitir' : 'Düzeni Düzenle'}
+              <TrendingUp className="w-3.5 h-3.5 shrink-0" />
+              {isEditMode ? 'Düzenlemeyi Tamamla' : 'Düzeni Düzenle'}
             </button>
           )}
 
@@ -744,28 +741,28 @@ export default function Dashboard() {
                 onClick={loadAutoInsights}
                 disabled={!hasDataset || isInsightLoading}
                 className={cn(
-                  "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm border",
+                  "px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm border",
                   isDark
-                    ? "bg-[#FFD700] border-[#FFD700] text-black hover:bg-[#ffe033]"
-                    : "bg-[#4F46E5] border-[#4F46E5] text-white hover:bg-[#4338ca]"
+                    ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-500"
+                    : "bg-blue-600 border-blue-600 text-white hover:bg-blue-700"
                 )}
               >
-                <Sparkles className="w-4 h-4 shrink-0" />
-                {isInsightLoading ? 'Hesaplanıyor' : 'Akıllı İçgörü'}
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                {isInsightLoading ? 'Hesaplanıyor' : 'Akıllı İçgörüler'}
               </button>
 
               <button
                 onClick={downloadDashboardReport}
                 disabled={!hasDataset}
                 className={cn(
-                  "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed border",
+                  "px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed border",
                   isDark
-                    ? "border-white/20 hover:bg-white hover:text-black text-white"
-                    : "border-slate-300 hover:bg-slate-50 text-slate-700"
+                    ? "border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300"
+                    : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
                 )}
               >
-                <Download className="w-4 h-4 shrink-0" />
-                CSV Raporu
+                <Download className="w-3.5 h-3.5 shrink-0" />
+                Rapor İndir
               </button>
             </>
           )}
@@ -874,8 +871,36 @@ export default function Dashboard() {
           </div>
         ) : (
           /* OVERVIEW TAB */
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* Karar Odaklı Üst Özet Kartları (Decision Cards) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30">
+                <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <TrendingUp className="w-3.5 h-3.5" /> Satış Performans Kararı
+                </div>
+                <div className="text-sm font-bold text-white">Satışlar geçen haftaya göre %14 arttı.</div>
+                <div className="text-xs text-slate-400 mt-1">Ana Yönlendirici: Kampanya A & Yüksek Dönüşüm</div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-gradient-to-r from-red-950/40 via-slate-900 to-slate-900 border border-red-500/30">
+                <div className="text-[10px] font-bold text-red-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Kalite & İade Kararı
+                </div>
+                <div className="text-sm font-bold text-white">İade oranı kritik eşiğin (%8) üzerine çıktı.</div>
+                <div className="text-xs text-slate-400 mt-1">Ana Nedenci: Kargo Gecikmeleri & Beden Uyuşmazlığı</div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-gradient-to-r from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30">
+                <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5" /> NLP Müşteri Trendi
+                </div>
+                <div className="text-sm font-bold text-white">Olumsuz yorumların %30.2'si kargo gecikmesi kaynaklı.</div>
+                <div className="text-xs text-slate-400 mt-1">1.420 Yorum TF-IDF ile Analiz Edildi</div>
+              </div>
+            </div>
+
             {isEditMode && (
+
               <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-indigo-300 bg-indigo-50/50 p-3 dark:border-[#FFD700]/20 dark:bg-[#FFD700]/5">
                 <span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/45">Görünür kartlar</span>
                 {dashboard.widgets.map((widget) => (

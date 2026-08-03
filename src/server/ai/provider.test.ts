@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AiProviderError, generateAiResponse, getAiConfiguration } from './provider';
+import { AiProviderError, generateAiResponse, generateAiResponseStream, getAiConfiguration } from './provider';
 
 const originalEnv = { ...process.env };
 
@@ -153,5 +153,35 @@ describe('AI provider adapter', () => {
       code: 'AI_NOT_CONFIGURED'
     } satisfies Partial<AiProviderError>);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('streams chunks in real-time to onChunk callback during generateAiResponseStream', async () => {
+    process.env.AI_PROVIDER = 'nvidia';
+    process.env.NVIDIA_API_KEY = 'test-nvidia-key';
+
+    const sseBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Merhaba "}}]}\n\n'));
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Dünya"}}]}\n\n'));
+        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+        controller.close();
+      }
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: sseBody
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const receivedChunks: string[] = [];
+    const response = await generateAiResponseStream('test streaming', (chunkText) => {
+      receivedChunks.push(chunkText);
+    });
+
+    expect(response.text).toBe('Merhaba Dünya');
+    expect(receivedChunks).toEqual(['Merhaba ', 'Dünya']);
   });
 });

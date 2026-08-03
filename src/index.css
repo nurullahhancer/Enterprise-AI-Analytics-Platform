@@ -15,23 +15,31 @@
   --bg-card: #ffffff;
   --text-primary: #0f172a;
   --text-secondary: #475569;
-  --border-color: rgba(15, 23, 42, 0.08);
-  --accent-color: #4f46e5;
+  --text-muted: #94a3b8;
+  --border-color: rgba(15, 23, 42, 0.09);
+  --accent-color: #2563eb;
+  --accent-hover: #1d4ed8;
   --accent-text: #ffffff;
-  --accent-light: rgba(79, 70, 229, 0.08);
+  --accent-light: rgba(37, 99, 235, 0.06);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   color-scheme: light;
 }
 
 .dark {
-  --bg-primary: #0e0e0e;
-  --bg-secondary: #0a0a0a;
-  --bg-card: #161616;
-  --text-primary: #f0f0f0;
+  --bg-primary: #0b0f17;
+  --bg-secondary: #111827;
+  --bg-card: #151e2e;
+  --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
+  --text-muted: #64748b;
   --border-color: rgba(255, 255, 255, 0.08);
-  --accent-color: #ffd700;
-  --accent-text: #000000;
-  --accent-light: rgba(255, 215, 0, 0.1);
+  --accent-color: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-text: #ffffff;
+  --accent-light: rgba(59, 130, 246, 0.1);
   color-scheme: dark;
 }
 
@@ -74,10 +82,9 @@ textarea::placeholder {
 
 .app-workspace {
   background-image:
-    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent-color) 7%, transparent) 0, transparent 26rem),
-    linear-gradient(color-mix(in srgb, var(--border-color) 30%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--border-color) 30%, transparent) 1px, transparent 1px);
-  background-size: auto, 32px 32px, 32px 32px;
+    linear-gradient(color-mix(in srgb, var(--border-color) 25%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border-color) 25%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
   background-attachment: local;
 }
 
@@ -102,13 +109,97 @@ textarea {
   }
 }
 
+/* ── Animation Keyframes & Dynamic Micro-interactions ───────────────────────── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes floatSubtle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2.5s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: floatSubtle 4s ease-in-out infinite;
+}
+
+.interactive-card {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.interactive-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -6px rgba(37, 99, 235, 0.12);
+}
+
+.dark .interactive-card:hover {
+  box-shadow: 0 12px 28px -6px rgba(59, 130, 246, 0.2);
+}
+
+.glass-card {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+  ::before,
+  ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

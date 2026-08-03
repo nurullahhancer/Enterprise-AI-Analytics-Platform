@@ -149,9 +149,9 @@ export default function App() {
 
   if (isSessionLoading) {
     return (
-      <div className="app-viewport flex items-center justify-center bg-[#0E0E0E] px-6 text-[#F0F0F0]">
-        <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-widest text-white/60" role="status" aria-live="polite">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-[#FFD700]" />
+      <div className="app-viewport flex items-center justify-center bg-[#0B0F17] px-6 text-slate-100">
+        <div className="flex items-center gap-3 text-xs font-semibold text-slate-400" role="status" aria-live="polite">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-700 border-t-blue-500" />
           Oturum doğrulanıyor...
         </div>
       </div>
@@ -160,15 +160,15 @@ export default function App() {
 
   if (!user && sessionError) {
     return (
-      <div className="app-viewport flex items-center justify-center bg-[#0E0E0E] px-6 text-[#F0F0F0]">
-        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
-          <h1 className="text-xl font-black uppercase tracking-tight">Oturum doğrulanamadı</h1>
-          <p className="mt-3 text-sm text-white/60">{sessionError}</p>
+      <div className="app-viewport flex items-center justify-center bg-[#0B0F17] px-6 text-slate-100">
+        <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-[#111827] p-8 text-center shadow-xl">
+          <h1 className="text-lg font-bold text-slate-100">Oturum doğrulaması başarısız</h1>
+          <p className="mt-2 text-sm text-slate-400">{sessionError}</p>
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
               onClick={() => void restoreSession()}
-              className="flex-1 rounded-xl bg-[#FFD700] px-4 py-3 text-xs font-bold uppercase tracking-wider text-black"
+              className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-500 transition-colors"
             >
               Tekrar Dene
             </button>
@@ -178,7 +178,7 @@ export default function App() {
                 clearAuthTokens();
                 setSessionError('');
               }}
-              className="flex-1 rounded-xl border border-white/15 px-4 py-3 text-xs font-bold uppercase tracking-wider text-white"
+              className="flex-1 rounded-lg border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800 transition-colors"
             >
               Giriş Ekranı
             </button>
@@ -277,8 +277,8 @@ export default function App() {
 
   return (
     <div className={cn(
-      "app-viewport flex flex-col overflow-hidden font-sans transition-colors duration-300 md:flex-row",
-      theme === 'dark' ? "bg-[#0E0E0E] text-[#F0F0F0]" : "bg-[#F8FAFC] text-[#0F172A]"
+      "app-viewport flex flex-col overflow-hidden font-sans transition-colors duration-200 md:flex-row",
+      theme === 'dark' ? "bg-[#0B0F17] text-slate-100" : "bg-[#F8FAFC] text-slate-900"
     )}>
       <div className="hidden md:flex shrink-0">
         <Sidebar
@@ -295,60 +295,51 @@ export default function App() {
       </div>
 
       <main className={cn(
-        "flex h-full min-w-0 flex-1 flex-col overflow-hidden pb-[calc(68px+env(safe-area-inset-bottom))] transition-colors duration-300 md:pb-0",
-        theme === 'dark' ? "bg-[#111111]" : "bg-[#F1F5F9]"
+        "flex h-full min-w-0 flex-1 flex-col overflow-hidden pb-[calc(68px+env(safe-area-inset-bottom))] transition-colors duration-200 md:pb-0",
+        theme === 'dark' ? "bg-[#0F172A]/40" : "bg-[#F1F5F9]"
       )}>
         <header className={cn(
-          "hidden h-20 shrink-0 items-center justify-between gap-6 border-b px-7 md:flex lg:px-10",
+          "hidden h-16 shrink-0 items-center justify-between gap-6 border-b px-6 md:flex lg:px-8",
           theme === 'dark'
-            ? "border-white/10 bg-[#0E0E0E]/95"
-            : "border-slate-200/80 bg-white/95"
+            ? "border-slate-800/80 bg-[#111827]/90"
+            : "border-slate-200 bg-white/95"
         )}>
-          <div className="flex min-w-0 items-center gap-4">
+          <div className="flex min-w-0 items-center gap-3">
             <div className={cn(
-              "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl shadow-sm",
-              theme === 'dark' ? "bg-[#FFD700] text-black" : "bg-[#4F46E5] text-white"
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border",
+              theme === 'dark' ? "border-slate-700 bg-slate-800 text-blue-400" : "border-blue-100 bg-blue-50 text-blue-600"
             )}>
-              <activeTab.icon className="h-5 w-5" />
+              <activeTab.icon className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <div className={cn(
-                "flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em]",
-                theme === 'dark' ? "text-white/35" : "text-slate-400"
-              )}>
+              <div className="flex items-center gap-1.5 text-xs text-slate-400">
                 <span>Ana Sayfa</span>
                 <span aria-hidden="true">/</span>
-                <span className={theme === 'dark' ? "text-[#FFD700]" : "text-[#4F46E5]"}>{activeTab.mobileLabel}</span>
+                <span className={cn("font-medium", theme === 'dark' ? "text-slate-200" : "text-slate-700")}>{activeTab.mobileLabel}</span>
               </div>
-              <h1 className="mt-1 truncate text-lg font-black tracking-tight">{activeTab.label}</h1>
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
             <div className={cn(
-              "hidden items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold xl:flex",
+              "hidden items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium xl:flex",
               theme === 'dark'
-                ? "border-emerald-500/15 bg-emerald-500/5 text-emerald-300"
+                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
                 : "border-emerald-200 bg-emerald-50 text-emerald-700"
             )}>
-              <Activity className="h-4 w-4" />
-              Her Şey Hazır
+              <Activity className="h-3.5 w-3.5 text-emerald-500" />
+              Sistem Hazır
             </div>
             <div className={cn(
-              "flex max-w-64 items-center gap-3 rounded-xl border px-3 py-2",
-              theme === 'dark' ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"
+              "flex max-w-64 items-center gap-2.5 rounded-lg border px-3 py-1.5 text-xs",
+              theme === 'dark' ? "border-slate-800 bg-slate-800/60 text-slate-300" : "border-slate-200 bg-slate-50 text-slate-700"
             )}>
-              <Building2 className={cn("h-4 w-4 shrink-0", theme === 'dark' ? "text-[#FFD700]" : "text-[#4F46E5]")} />
-              <div className="min-w-0">
-                <p className={cn("text-[9px] font-bold uppercase tracking-widest", theme === 'dark' ? "text-white/35" : "text-slate-400")}>Şirket veya Ekip</p>
-                <p className="truncate text-xs font-bold">{activeMembership?.organization_name || 'ReAi'}</p>
-              </div>
+              <Building2 className={cn("h-4 w-4 shrink-0", theme === 'dark' ? "text-blue-400" : "text-blue-600")} />
+              <span className="truncate font-medium">{activeMembership?.organization_name || 'Çalışma Alanı'}</span>
             </div>
             <div className={cn(
-              "flex h-11 w-11 items-center justify-center rounded-xl text-sm font-black text-white shadow-sm",
-              theme === 'dark'
-                ? "bg-gradient-to-br from-pink-500 to-amber-400"
-                : "bg-gradient-to-br from-indigo-500 to-violet-600"
+              "flex h-9 w-9 items-center justify-center rounded-lg text-xs font-bold text-white shadow-sm",
+              theme === 'dark' ? "bg-slate-800 text-blue-400 border border-slate-700" : "bg-blue-600 text-white"
             )} title={user.name} aria-label={`Oturum sahibi: ${user.name}`}>
               {user.name.charAt(0).toLocaleUpperCase('tr-TR')}
             </div>
@@ -392,8 +383,13 @@ export default function App() {
           </button>
         </header>
 
-        <div ref={mainContentRef} id="main-content" className="app-workspace min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {renderView()}
+        <div ref={mainContentRef} id="main-content" className={cn(
+          "app-workspace min-h-0 flex-1 overflow-y-auto overscroll-contain",
+          currentView === 'chat' ? "p-2 md:p-5" : "p-4 md:p-6"
+        )}>
+          <div key={currentView} className="animate-fade-in-up transition-all duration-300 h-full">
+            {renderView()}
+          </div>
         </div>
       </main>
 

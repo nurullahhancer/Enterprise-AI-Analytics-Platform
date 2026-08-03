@@ -304,27 +304,26 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
 
   return (
     <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-6 p-4 pb-6 md:p-8 lg:p-10">
-      <header className="relative flex flex-col gap-5 overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-[#151515] md:p-8 lg:flex-row lg:items-end lg:justify-between">
-        <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl dark:bg-[#FFD700]/10" aria-hidden="true" />
+      <header className="relative flex flex-col gap-4 overflow-hidden rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-[#111827] md:p-8 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-600 dark:text-[#FFD700]">
+          <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Verileriniz kullanıma hazır
+            Verileriniz Güvenli Alanınızda Saklanır
           </div>
-          <h1 className="text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-5xl">Verilerim</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-white/55">
-            Satış, müşteri, Excel veya iş dosyalarınızı yükleyin. Birlikte incelenebilen dosyalar otomatik olarak bir araya getirilir; diğer dosyalarınız silinmeden ayrı tutulur.
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 md:text-4xl">Veri Yönetimi</h1>
+          <p className="mt-1.5 max-w-2xl text-xs leading-5 text-slate-500 dark:text-slate-400">
+            Satış, finans, müşteri veya işlem dosyalarınızı yükleyin. Birbiriyle ilişkili dosyalar otomatik olarak eşleştirilir ve analize hazır hale getirilir.
           </p>
         </div>
-        <div className="relative flex flex-wrap gap-2">
+        <div className="relative flex flex-wrap gap-2.5">
           {onOpenEnterprise && canManageConnections && (
             <button
               type="button"
               onClick={onOpenEnterprise}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-white/15 dark:bg-white/5 dark:text-white dark:hover:bg-white/10"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             >
-              <ShieldCheck className="h-4 w-4" />
-              Yeni Veri Kaynağı Bağla
+              <ShieldCheck className="h-4 w-4 text-blue-500" />
+              Sistem Bağlantısı Ekle
             </button>
           )}
           {onNextView && (
@@ -332,7 +331,7 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
               type="button"
               onClick={onNextView}
               disabled={analysisDatasets.length === 0}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-[#FFD700] dark:text-black dark:hover:bg-[#ffe24d]"
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40 shadow-sm"
             >
               Sonuçları Gör
               <ArrowRight className="h-4 w-4" />
@@ -345,36 +344,36 @@ export default function DataImport({ user, onNextView, onOpenEnterprise }: DataI
         {metrics.map((metric) => (
           <div
             key={metric.label}
-            className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.045] md:p-5"
+            className="interactive-card animate-fade-in-up min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-[#151E2E] md:p-5"
           >
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-white/40">{metric.label}</p>
-              <metric.icon className="h-4 w-4 text-indigo-500 dark:text-[#FFD700]" />
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{metric.label}</p>
+              <metric.icon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
             </div>
-            <p className="mt-3 truncate text-2xl font-bold text-slate-950 dark:text-white">{metric.value}</p>
-            <p className="mt-1 text-xs text-slate-400 dark:text-white/35">{metric.helper}</p>
+            <p className="mt-2.5 truncate text-2xl font-bold text-slate-900 dark:text-slate-100">{metric.value}</p>
+            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{metric.helper}</p>
           </div>
         ))}
       </section>
 
-      <section className="border-y border-slate-200 py-5 dark:border-white/10">
-        <div className="grid grid-cols-2 gap-px overflow-hidden border border-slate-200 bg-slate-200 dark:border-white/10 dark:bg-white/10 md:grid-cols-5">
+      <section className="border-y border-slate-200 py-4 dark:border-slate-800">
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 dark:border-slate-800 dark:bg-slate-800 md:grid-cols-5">
           {flow.map((step, index) => (
-            <div key={step.label} className="relative flex min-h-24 items-center gap-3 bg-white px-4 py-4 dark:bg-[#151515]">
+            <div key={step.label} className="relative flex min-h-20 items-center gap-3 bg-white px-4 py-3 dark:bg-[#111827]">
               <div className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-md border',
                 step.ready
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-400'
-                  : 'border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/5 dark:text-white/35',
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-500/20 dark:bg-emerald-950/30 dark:text-emerald-400'
+                  : 'border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-500',
               )}>
                 <step.icon className="h-4 w-4" />
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-white/30">0{index + 1}</span>
-                  <p className="text-xs font-bold text-slate-800 dark:text-white">{step.label}</p>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-slate-400">0{index + 1}</span>
+                  <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{step.label}</p>
                 </div>
-                <p className="mt-1 truncate text-[11px] text-slate-400 dark:text-white/35">{step.helper}</p>
+                <p className="mt-0.5 truncate text-xs text-slate-400 dark:text-slate-500">{step.helper}</p>
               </div>
             </div>
           ))}

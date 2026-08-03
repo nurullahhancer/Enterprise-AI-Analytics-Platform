@@ -155,43 +155,43 @@ export default function Login({ onLogin }: LoginProps) {
   };
 
   return (
-    <div className="app-viewport flex flex-col justify-start overflow-y-auto bg-[#0E0E0E] px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-[calc(env(safe-area-inset-top)+2rem)] font-sans text-[#F0F0F0] sm:justify-center sm:px-6 sm:py-10 lg:px-8">
+    <div className="app-viewport flex flex-col justify-start overflow-y-auto bg-[#0B0F17] px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-[calc(env(safe-area-inset-top)+2rem)] font-sans text-slate-100 sm:justify-center sm:px-6 sm:py-10 lg:px-8">
       <div className="mx-auto w-full max-w-sm text-center">
         <div className="flex justify-center">
-          <div className="w-14 h-14 md:w-16 md:h-16 bg-[#FFD700] rounded-full flex items-center justify-center shadow-lg">
-             <div className="w-5 h-5 md:w-6 md:h-6 bg-black rounded-full"></div>
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md">
+            <span className="text-xl font-bold tracking-tight">Re</span>
           </div>
         </div>
-        <h2 className="mt-5 text-[36px] md:text-[40px] font-black uppercase tracking-tighter leading-none">
-          Re<span className="text-[#FFD700] italic">Ai</span>
+        <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-100">
+          ReAI Platform
         </h2>
-        <p className="mt-3 text-[10px] md:text-xs font-mono uppercase tracking-[0.2em] opacity-40">
-          Analytics & Prediction Platform
+        <p className="mt-1 text-xs text-slate-400">
+          Kurumsal Veri & Analiz Yönetimi
         </p>
       </div>
 
-      <div className="mx-auto mt-7 w-full max-w-sm md:mt-10">
-        <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-6 backdrop-blur-md sm:px-8 sm:py-8">
+      <div className="mx-auto mt-6 w-full max-w-sm">
+        <div className="rounded-xl border border-slate-800 bg-[#111827] px-6 py-6 shadow-xl sm:px-8 sm:py-8">
           {successMsg && (
-            <div role="status" aria-live="polite" className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs rounded-xl font-bold uppercase tracking-wider">
+            <div role="status" aria-live="polite" className="mb-5 p-3 bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs rounded-lg font-medium">
               {successMsg}
             </div>
           )}
           {errorMsg && (
-            <div role="alert" aria-live="assertive" className="mb-6 p-4 bg-pink-500/10 border border-pink-500/20 text-pink-400 text-xs rounded-xl font-bold uppercase tracking-wider">
+            <div role="alert" aria-live="assertive" className="mb-5 p-3 bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs rounded-lg font-medium">
               {errorMsg}
             </div>
           )}
 
-          <form className="space-y-5 sm:space-y-6" onSubmit={handleSubmit}>
+          <form className="space-y-4" onSubmit={handleSubmit}>
             {isRegister && !forgotMode && !resetToken && (
               <div>
-                <label htmlFor="name" className="block text-[10px] font-bold uppercase tracking-widest text-[#F0F0F0] opacity-60 mb-2">
+                <label htmlFor="name" className="block text-xs font-medium text-slate-300 mb-1.5">
                   Ad Soyad
                 </label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <UserIcon className="h-5 w-5 opacity-40" />
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                    <UserIcon className="h-4 w-4" />
                   </div>
                   <input
                     id="name"
@@ -201,7 +201,7 @@ export default function Login({ onLogin }: LoginProps) {
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="block w-full pl-12 pr-4 py-4 bg-black/50 border border-white/10 rounded-xl focus:ring-1 focus:ring-[#FFD700] focus:border-[#FFD700] text-sm transition-all text-[#F0F0F0] placeholder-white/20"
+                    className="block w-full pl-9 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 text-xs text-slate-100 placeholder-slate-500 transition-colors"
                     placeholder="Adınız Soyadınız"
                   />
                 </div>
@@ -210,19 +210,19 @@ export default function Login({ onLogin }: LoginProps) {
 
             {isRegister && !invitationToken && !forgotMode && !resetToken && (
               <div>
-                <label htmlFor="organizationName" className="block text-[10px] font-bold uppercase tracking-widest text-[#F0F0F0] opacity-60 mb-2">
-                  Çalışma Alanı
+                <label htmlFor="organizationName" className="block text-xs font-medium text-slate-300 mb-1.5">
+                  Çalışma Alanı (Şirket Adı)
                 </label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Building2 className="h-5 w-5 opacity-40" />
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                    <Building2 className="h-4 w-4" />
                   </div>
                   <input
                     id="organizationName"
                     type="text"
                     value={organizationName}
                     onChange={(event) => setOrganizationName(event.target.value)}
-                    className="block w-full pl-12 pr-4 py-4 bg-black/50 border border-white/10 rounded-xl focus:ring-1 focus:ring-[#FFD700] focus:border-[#FFD700] text-sm transition-all text-[#F0F0F0] placeholder-white/20"
+                    className="block w-full pl-9 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 text-xs text-slate-100 placeholder-slate-500 transition-colors"
                     placeholder="Şirket veya ekip adı"
                   />
                 </div>
@@ -230,48 +230,48 @@ export default function Login({ onLogin }: LoginProps) {
             )}
 
             {!resetToken && <div>
-              <label htmlFor="email" className="block text-[10px] font-bold uppercase tracking-widest text-[#F0F0F0] opacity-60 mb-2">
+              <label htmlFor="email" className="block text-xs font-medium text-slate-300 mb-1.5">
                 Kurumsal E-posta
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 opacity-40" />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                  <Mail className="h-4 w-4" />
                 </div>
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    inputMode="email"
-                    autoCapitalize="none"
-                    spellCheck={false}
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="block w-full pl-12 pr-4 py-4 bg-black/50 border border-white/10 rounded-xl focus:ring-1 focus:ring-[#FFD700] focus:border-[#FFD700] text-sm transition-all text-[#F0F0F0] placeholder-white/20"
+                  className="block w-full pl-9 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 text-xs text-slate-100 placeholder-slate-500 transition-colors"
                   placeholder="isim@sirket.com"
                 />
               </div>
             </div>}
 
             {!forgotMode && <div>
-              <label htmlFor="password" className="block text-[10px] font-bold uppercase tracking-widest text-[#F0F0F0] opacity-60 mb-2">
+              <label htmlFor="password" className="block text-xs font-medium text-slate-300 mb-1.5">
                 {resetToken ? 'Yeni Şifre' : 'Şifre'}
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 opacity-40" />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                  <Lock className="h-4 w-4" />
                 </div>
                 <input
                   id="password"
-                    name="password"
-                    type="password"
-                    autoComplete={isRegister || resetToken ? 'new-password' : 'current-password'}
-                    minLength={isRegister || resetToken ? 12 : undefined}
+                  name="password"
+                  type="password"
+                  autoComplete={isRegister || resetToken ? 'new-password' : 'current-password'}
+                  minLength={isRegister || resetToken ? 12 : undefined}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full pl-12 pr-4 py-4 bg-black/50 border border-white/10 rounded-xl focus:ring-1 focus:ring-[#FFD700] focus:border-[#FFD700] text-sm transition-all text-[#F0F0F0] placeholder-white/20"
+                  className="block w-full pl-9 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 text-xs text-slate-100 placeholder-slate-500 transition-colors"
                   placeholder="••••••••"
                 />
               </div>
@@ -281,17 +281,17 @@ export default function Login({ onLogin }: LoginProps) {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex justify-center items-center gap-3 py-4 px-4 border border-[#FFD700] rounded-xl shadow-sm text-sm font-bold uppercase tracking-widest text-black bg-[#FFD700] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full flex justify-center items-center gap-2 py-2.5 px-4 border border-blue-600 rounded-lg shadow-sm text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
-                  <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin"></div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
                     İşlem Yapılıyor...
                   </div>
                 ) : (
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     {resetToken ? 'Şifreyi Yenile' : forgotMode ? 'Yenileme Bağlantısı Gönder' : isRegister ? 'Kayıt Ol' : 'Giriş Yap'}
-                    <LogIn className="w-5 h-5" />
+                    <LogIn className="w-4 h-4" />
                   </div>
                 )}
               </button>
@@ -299,20 +299,20 @@ export default function Login({ onLogin }: LoginProps) {
           </form>
 
           {/* Mode Switcher */}
-          <div className="mt-6 text-center">
+          <div className="mt-5 text-center">
             {!isRegister && !forgotMode && !resetToken && <button
               onClick={() => { setForgotMode(true); setErrorMsg(''); setSuccessMsg(''); setPassword(''); }}
               type="button"
-              className="mb-4 block w-full text-[10px] font-bold uppercase tracking-widest text-white/50 hover:text-white"
+              className="mb-3 block w-full text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors"
             >
-              Şifremi Unuttum
+              Şifremi unuttum
             </button>}
             {forgotMode && <button
               onClick={() => { setForgotMode(false); setErrorMsg(''); setSuccessMsg(''); }}
               type="button"
-              className="text-xs font-bold uppercase tracking-widest text-[#FFD700]"
+              className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
             >
-              Giriş Ekranına Dön
+              Giriş ekranına dön
             </button>}
             {!forgotMode && !resetToken && (registrationEnabled ? <button
                 onClick={() => {
@@ -322,20 +322,20 @@ export default function Login({ onLogin }: LoginProps) {
                   setPassword('');
                 }}
                 type="button"
-              className="text-xs font-bold uppercase tracking-widest text-[#FFD700] hover:text-[#FFD700]/80 transition-colors"
+              className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
             >
-              {isRegister ? 'Zaten hesabınız var mı? Giriş Yapın' : invitationToken ? 'Davet ile yeni hesap oluşturun' : 'Hesabınız yok mu? Kayıt Olun'}
-            </button> : <p className="text-[10px] font-bold uppercase tracking-widest text-white/35">Yeni hesap kaydı yönetici tarafından kapalıdır.</p>)}
+              {isRegister ? 'Zaten hesabınız var mı? Giriş yapın' : invitationToken ? 'Davet ile yeni hesap oluşturun' : 'Hesabınız yok mu? Kayıt olun'}
+            </button> : <p className="text-xs text-slate-500">Yeni hesap kaydı yönetici tarafından kapatılmıştır.</p>)}
           </div>
 
-          {showApkDownload && <div className="mt-5 border-t border-white/10 pt-5">
+          {showApkDownload && <div className="mt-5 border-t border-slate-800 pt-4">
             <a
               href={getApkDownloadUrl()}
               download
-              className="flex w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs font-bold uppercase tracking-widest text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
             >
               Android APK İndir
-              <Download className="h-4 w-4" />
+              <Download className="h-3.5 w-3.5" />
             </a>
           </div>}
         </div>
