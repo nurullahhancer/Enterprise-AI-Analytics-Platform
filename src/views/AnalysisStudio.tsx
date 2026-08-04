@@ -511,10 +511,21 @@ export default function AnalysisStudio({
   const activeRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setTargetColumn((current) => (
-      numericColumns.some((column) => column.name === current) ? current : numericColumns[0]?.name || ''
-    ));
-  }, [numericColumns]);
+    if (!profile || numericColumns.length === 0) {
+      setTargetColumn('');
+      setResult(null);
+      setInterpretation(null);
+    } else {
+      setTargetColumn((current) => (
+        numericColumns.some((column) => column.name === current) ? current : numericColumns[0]?.name || ''
+      ));
+    }
+  }, [numericColumns, profile]);
+
+  useEffect(() => {
+    setResult(null);
+    setInterpretation(null);
+  }, [datasetFilename]);
 
   useEffect(() => () => activeRequest.current?.abort(), []);
 

@@ -50,6 +50,11 @@ interface DynamicDashboardResponse {
     columns: ProfileColumn[];
   } | null;
   widgets: DashboardWidget[];
+  nlp?: {
+    hasComments: boolean;
+    totalComments: number;
+    topComplaint: { topic: string; count: number; percentage: number } | null;
+  };
   template?: { key: string; label: string; reason: string };
   preference?: { order: string[]; hidden: string[]; updatedAt: string | null };
 }
@@ -876,26 +881,46 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30">
                 <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <TrendingUp className="w-3.5 h-3.5" /> Satış Performans Kararı
+                  <TrendingUp className="w-3.5 h-3.5" /> Aktif Veri Analitiği
                 </div>
-                <div className="text-sm font-bold text-white">Satışlar geçen haftaya göre %14 arttı.</div>
-                <div className="text-xs text-slate-400 mt-1">Ana Yönlendirici: Kampanya A & Yüksek Dönüşüm</div>
+                <div className="text-sm font-bold text-white">
+                  {dashboard.datasetFilename ? `${dashboard.datasetFilename} inceleniyor.` : 'Veri seti aktif.'}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {dashboard.profile ? `${dashboard.profile.rowCount.toLocaleString('tr-TR')} satır, ${dashboard.profile.columnCount} sütun analiz edildi.` : 'Özet metrikler hesaplandı.'}
+                </div>
               </div>
 
               <div className="p-4 rounded-xl bg-gradient-to-r from-red-950/40 via-slate-900 to-slate-900 border border-red-500/30">
                 <div className="text-[10px] font-bold text-red-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Kalite & İade Kararı
+                  <AlertTriangle className="w-3.5 h-3.5" /> Kalite & Risk Sinyali
                 </div>
-                <div className="text-sm font-bold text-white">İade oranı kritik eşiğin (%8) üzerine çıktı.</div>
-                <div className="text-xs text-slate-400 mt-1">Ana Nedenci: Kargo Gecikmeleri & Beden Uyuşmazlığı</div>
+                <div className="text-sm font-bold text-white">
+                  {dashboard.profile?.columns.some((c) => c.nullRate > 20)
+                    ? 'Yüksek eksik değer oranına sahip kolonlar var.'
+                    : 'Veri kalitesi ve tutarlılığı uygun seviyede.'}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {dashboard.profile?.columns.filter((c) => c.nullRate > 20).length
+                    ? `${dashboard.profile.columns.filter((c) => c.nullRate > 20).length} kolonda %20+ eksik veri var.`
+                    : 'Tüm kolonlarda eksik veri oranı <%20.'}
+                </div>
               </div>
 
               <div className="p-4 rounded-xl bg-gradient-to-r from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30">
                 <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
                   <Brain className="w-3.5 h-3.5" /> NLP Müşteri Trendi
                 </div>
-                <div className="text-sm font-bold text-white">Olumsuz yorumların %30.2'si kargo gecikmesi kaynaklı.</div>
-                <div className="text-xs text-slate-400 mt-1">1.420 Yorum TF-IDF ile Analiz Edildi</div>
+                <div className="text-sm font-bold text-white">
+                  {dashboard.nlp?.hasComments && dashboard.nlp.topComplaint
+                    ? `Şikayetlerin %${dashboard.nlp.topComplaint.percentage}'i "${dashboard.nlp.topComplaint.topic}" kaynaklı.`
+                    : 'Aktif veri setinde metin/yorum kolonu tespit edilmedi.'}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {dashboard.nlp?.hasComments
+                    ? `${dashboard.nlp.totalComments.toLocaleString('tr-TR')} Yorum Analiz Edildi`
+                    : 'Yorum analizi için metin kolonu içeren CSV yükleyin.'}
+                </div>
               </div>
             </div>
 

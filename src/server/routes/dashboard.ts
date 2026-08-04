@@ -8,8 +8,10 @@ import {
   buildDatasetSummary,
   buildMlInsights,
   detectDashboardTemplate,
+  extractNlpComplaints,
   recommendWidgets
 } from '../ml/pipeline';
+import { BIEngine } from '../bi/engine';
 
 const router = Router();
 
@@ -20,7 +22,9 @@ async function dynamicHandler(req: AuthenticatedRequest, res: Response, next: Ne
       return res.json({
         emptyState: 'Veri arttıkça burada içgörüler görünecek. Başlamak için CSV dosyası yükleyin.',
         profile: null,
-        widgets: []
+        widgets: [],
+        nlp: { hasComments: false, totalComments: 0, topComplaint: null, clusters: [] },
+        biResult: BIEngine.evaluate({})
       });
     }
 
@@ -28,6 +32,17 @@ async function dynamicHandler(req: AuthenticatedRequest, res: Response, next: Ne
     const ml = buildMlInsights(dataset.file_content, dataset.filename);
     const summary = buildDatasetSummary(dataset.file_content, dataset.filename);
     const widgets = recommendWidgets(profile, ml, summary);
+    const nlp = extractNlpComplaints(dataset.file_content);
+
+    const biResult = BIEngine.evaluate({
+      returnRatePct: summary.churnRate ? summary.churnRate / 100 : undefined,
+      profitMarginPct: summary.grossMargin ? summary.grossMargin / 100 : undefined,
+      nlpTopComplaint: nlp.topComplaint ? {
+        topic: nlp.topComplaint.topic,
+        count: nlp.topComplaint.count,
+        percentage: nlp.topComplaint.percentage
+      } : undefined
+    });
 
     res.json({
       datasetIds: dataset.datasetIds,
@@ -38,6 +53,8 @@ async function dynamicHandler(req: AuthenticatedRequest, res: Response, next: Ne
       template: detectDashboardTemplate(profile),
       ml,
       widgets,
+      nlp,
+      biResult,
       preference: await getDashboardPreference(req.organization!.organization_id, req.user!.email)
     });
   } catch (err) {

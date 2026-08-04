@@ -434,3 +434,111 @@ export function buildExportPayload(title: string, rows: Array<{ metric: string; 
   const slug = safeTitle.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "rapor";
   return { fileName: `${slug}.csv`, contentType: "text/csv;charset=utf-8", base64Content: Buffer.from(csv, "utf8").toString("base64") };
 }
+
+export interface NlpClusterItem {
+  topic: string;
+  count: number;
+  percentage: number;
+}
+
+export interface NlpAnalysisResult {
+  hasComments: boolean;
+  totalComments: number;
+  topComplaint: NlpClusterItem | null;
+  clusters: NlpClusterItem[];
+  columnHeader: string | null;
+}
+
+export function extractNlpComplaints(fileContent: string): NlpAnalysisResult {
+  const rows = parseCsv(fileContent);
+  if (rows.length <= 1) {
+    return { hasComments: false, totalComments: 0, topComplaint: null, clusters: [], columnHeader: null };
+  }
+
+  const headers = rows[0] ?? [];
+  const body = rows.slice(1);
+
+  const commentPattern = /yorum|comment|feedback|şikayet|sikayet|review|destek|metin|mesaj|not|açıklama|aciklama|görüş|gorus|talep|şikayetler/i;
+
+  let targetColIndex = -1;
+  let targetColHeader: string | null = null;
+
+  for (let i = 0; i < headers.length; i++) {
+    if (commentPattern.test(headers[i])) {
+      targetColIndex = i;
+      targetColHeader = headers[i];
+      break;
+    }
+  }
+
+  if (targetColIndex === -1) {
+    for (let i = 0; i < headers.length; i++) {
+      const vals = body.map((r) => r[i] ?? '').filter((v) => v.trim().length > 0);
+      if (vals.length === 0) continue;
+      const avgLen = vals.reduce((s, v) => s + v.length, 0) / vals.length;
+      const numericCount = vals.filter((v) => toNumber(v) !== null).length;
+      if (avgLen > 15 && numericCount / vals.length < 0.2) {
+        targetColIndex = i;
+        targetColHeader = headers[i];
+        break;
+      }
+    }
+  }
+
+  if (targetColIndex === -1) {
+    return { hasComments: false, totalComments: 0, topComplaint: null, clusters: [], columnHeader: null };
+  }
+
+  const comments = body
+    .map((r) => (r[targetColIndex] ?? '').trim())
+    .filter((c) => c.length > 0);
+
+  if (comments.length === 0) {
+    return { hasComments: false, totalComments: 0, topComplaint: null, clusters: [], columnHeader: null };
+  }
+
+  const topicDefinitions: Array<{ topic: string; pattern: RegExp }> = [
+    { topic: 'Kargo ve Teslimat Gecikmesi', pattern: /kargo|gecikme|teslimat|kurye|varış|posta|geç geldi|gec geldi|ulaşmadı|ulasmadi|teslim/i },
+    { topic: 'Beden / Ebat Uyuşmazlığı', pattern: /beden|ebat|ölçü|olcu|küçük|kucuk|büyük|buyuk|dar|bol|kesim|numara|boyut/i },
+    { topic: 'Ambalaj / Paket Kutusunda Hasar', pattern: /ambalaj|paket|kutu|hasar|yırtık|yirtik|ezik|kırık|kirik|patlak|deforme/i },
+    { topic: 'Ürün Kalitesi ve Kusur', pattern: /kalite|kumaş|kumas|ip|renk|soluk|kusur|bozuk|çabuk|cabuk|kötü|kotu|kalitesiz/i },
+    { topic: 'Fiyat / İade ve Fatura İşlemleri', pattern: /fiyat|iade|ücret|ucret|pahalı|pahali|fatura|ödeme|odeme|para|tutar/i },
+    { topic: 'Müşteri Hizmetleri ve Destek', pattern: /müşteri|musteri|destek|iletişim|iletisim|cevap|telefon|temsilci|ilgisiz/i }
+  ];
+
+  const counts: Record<string, number> = {};
+
+  for (const comment of comments) {
+    let matched = false;
+    for (const def of topicDefinitions) {
+      if (def.pattern.test(comment)) {
+        counts[def.topic] = (counts[def.topic] || 0) + 1;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      counts['Diğer Müşteri Geri Bildirimleri'] = (counts['Diğer Müşteri Geri Bildirimleri'] || 0) + 1;
+    }
+  }
+
+  const totalComments = comments.length;
+  const clusters: NlpClusterItem[] = Object.entries(counts)
+    .map(([topic, count]) => ({
+      topic,
+      count,
+      percentage: Number(((count / totalComments) * 100).toFixed(1))
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const topComplaint = clusters[0] ?? null;
+
+  return {
+    hasComments: true,
+    totalComments,
+    topComplaint,
+    clusters,
+    columnHeader: targetColHeader
+  };
+}
+

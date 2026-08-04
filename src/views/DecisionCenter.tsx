@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -18,54 +18,67 @@ import {
 } from 'lucide-react';
 import type { User } from '../types';
 import { BIEngine } from '../server/bi/engine';
-import type { BusinessRiskSignal, BusinessOpportunitySignal } from '../server/bi/types';
+import type { BusinessRiskSignal, BusinessOpportunitySignal, BIEngineEvaluationResult } from '../server/bi/types';
+import { apiFetch, authHeaders, getApiUrl } from '../lib/api';
 
 interface DecisionCenterProps {
   user: User;
 }
 
+interface NlpClusterItem {
+  topic: string;
+  count: number;
+  percentage: number;
+}
+
+interface NlpData {
+  hasComments: boolean;
+  totalComments: number;
+  topComplaint: NlpClusterItem | null;
+  clusters: NlpClusterItem[];
+  columnHeader: string | null;
+}
+
 export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [datasetFilename, setDatasetFilename] = useState<string | null>(null);
+  const [nlpData, setNlpData] = useState<NlpData | null>(null);
 
-  // Mock domain state from ML + BI Engine for display demonstration
-  const [biResult, setBiResult] = useState(() =>
-    BIEngine.evaluate({
-      inventoryDays: 5,
-      skuInventory: [
-        { sku: 'SKU-8492', name: 'Kablosuz Kulaklık V2', stockDays: 4, stockQty: 24, dailyVelocity: 6 },
-        { sku: 'SKU-3104', name: 'Akıllı Saat Pro', stockDays: 11, stockQty: 55, dailyVelocity: 5 },
-      ],
-      profitMarginPct: 0.11, // 11%
-      roas: 1.8, // Inefficient
-      returnRatePct: 0.092, // 9.2%
-      cashFlow30dForecast: -45000,
-      churnRatePct: 0.12,
-      nlpTopComplaint: { topic: 'Kargo ve Teslimat Gecikmesi', count: 430, percentage: 30.2 },
-      salesGrowthVsLastWeekPct: 14,
-    })
+  const [biResult, setBiResult] = useState<BIEngineEvaluationResult>(() =>
+    BIEngine.evaluate({})
   );
 
-  const handleRefresh = () => {
+  const loadData = useCallback(async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      setBiResult(
-        BIEngine.evaluate({
-          inventoryDays: 6,
-          skuInventory: [
-            { sku: 'SKU-8492', name: 'Kablosuz Kulaklık V2', stockDays: 5, stockQty: 30, dailyVelocity: 6 },
-            { sku: 'SKU-3104', name: 'Akıllı Saat Pro', stockDays: 14, stockQty: 70, dailyVelocity: 5 },
-          ],
-          profitMarginPct: 0.12,
-          roas: 1.9,
-          returnRatePct: 0.088,
-          cashFlow30dForecast: -32000,
-          churnRatePct: 0.11,
-          nlpTopComplaint: { topic: 'Kargo ve Teslimat Gecikmesi', count: 410, percentage: 29.5 },
-          salesGrowthVsLastWeekPct: 16,
-        })
-      );
+    try {
+      const response = await apiFetch(getApiUrl('/api/dashboard/dynamic'), {
+        headers: authHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.biResult) {
+          setBiResult(data.biResult);
+        }
+        if (data.nlp) {
+          setNlpData(data.nlp);
+        }
+        setDatasetFilename(data.datasetFilename || null);
+      }
+    } catch (err) {
+      console.error('DecisionCenter veri yükleme hatası:', err);
+    } finally {
       setIsRefreshing(false);
-    }, 600);
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  const handleRefresh = () => {
+    void loadData();
   };
 
   const getSeverityBadge = (severity: string) => {
@@ -91,7 +104,11 @@ export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
             E-Ticaret & Muhasebe Karar Merkezi
           </h1>
           <p className="text-sm text-slate-400 mt-1 max-w-2xl">
-            Sistemimiz ham veri tablosu göstermez; ML tahminleri ve Business Intelligence Engine ile hesaplanan veriye dayalı riskleri, fırsatları ve aksiyon önerilerini sunar.
+            {datasetFilename ? (
+              <span>Aktif Analiz Grubu: <strong className="text-white">{datasetFilename}</strong></span>
+            ) : (
+              <span>Sistemimiz ham veri tablosu göstermez; ML tahminleri ve BI Engine ile veriye dayalı riskleri ve aksiyon önerilerini sunar.</span>
+            )}
           </p>
         </div>
 
@@ -111,7 +128,7 @@ export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
           <div className="text-xs font-medium text-slate-400">Genel Sağlık Durumu</div>
           <div className="mt-2 flex items-center justify-between">
             <span className="text-xl font-bold text-red-400 flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-red-400" /> Riskli Durum
+              <ShieldAlert className="w-5 h-5 text-red-400" /> {biResult.overallHealthStatus === 'CRITICAL' ? 'Kritik Riskli' : biResult.overallHealthStatus === 'AT_RISK' ? 'Riskli Durum' : 'İyi Durum'}
             </span>
             <span className="text-xs px-2 py-1 rounded-md bg-red-950/60 text-red-400 border border-red-800">
               {biResult.summaryCounts.criticalCount} Kritik Sinyal
@@ -128,7 +145,7 @@ export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
         </div>
 
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 backdrop-blur-sm">
-          <div className="text-xs font-medium text-slate-400">Erken Uarı & Riskler</div>
+          <div className="text-xs font-medium text-slate-400">Erken Uyarı & Riskler</div>
           <div className="mt-2 flex items-center justify-between">
             <span className="text-2xl font-extrabold text-amber-400">{biResult.summaryCounts.warningCount}</span>
             <span className="text-xs text-amber-400/80">Takip Edilmeli</span>
@@ -150,11 +167,19 @@ export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
           <Sparkles className="w-5 h-5 text-indigo-400" /> Dijital AI Analist Yönetici Özeti
         </div>
         <p className="text-slate-200 text-sm leading-relaxed">
-          "İşletmenizdeki en kritik risk <strong>stok tükenmesi</strong> ve <strong>negatif nakit akışı</strong> olarak tespit edilmiştir. Son 30 gündeki günlük 6 adetlik satış hızına göre <strong>SKU-8492 (Kablosuz Kulaklık V2)</strong> stokları 5 gün içinde tükenecektir (%89 güven skoru). Ayrıca, 30 günlük nakit akışı projeksiyonunuz <strong>-32.000 TL</strong> açık vermektedir. Reklam harcamalarınızdaki düşük ROAS (1.9x) nedeniyle bütçenin yeniden dağıtılması ve tedarik siparişinin acilen verilmesi önerilmektedir."
+          {biResult.riskSignals.length > 0 ? (
+            <span>
+              Aktif veri setinizdeki analiz sonuçlarına göre <strong>{biResult.summaryCounts.criticalCount} kritik risk</strong> ve <strong>{biResult.summaryCounts.warningCount} uyarı sinyali</strong> tespit edilmiştir. En öncelikli aksiyon: <strong>{biResult.riskSignals[0].title}</strong>. Veriye dayalı kanıt: {biResult.riskSignals[0].evidence}
+            </span>
+          ) : (
+            <span>
+              Yüklenen aktif veri seti üzerinde kritik risk sinyali tespit edilmemiştir. Veri kümenizdeki metrikler stabil görünmektedir.
+            </span>
+          )}
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400 border-t border-slate-800/80 pt-3">
           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> ML Modelleri: XGBoost, SARIMAX, TF-IDF</span>
-          <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> BI Engine: 7 Temel Kural Değerlendirildi</span>
+          <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> BI Engine: Dinamik Kural Analizi Yapıldı</span>
         </div>
       </div>
 
@@ -164,45 +189,51 @@ export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
           <ShieldAlert className="w-5 h-5 text-red-400" /> Tespiti Yapılan Kritik İş Riskleri & Aksiyonlar
         </h2>
 
-        <div className="grid grid-cols-1 gap-4">
-          {biResult.riskSignals.map((signal: BusinessRiskSignal) => (
-            <div
-              key={signal.id}
-              className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition-all shadow-lg space-y-4"
-            >
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  {getSeverityBadge(signal.severity)}
-                  <h3 className="text-base font-bold text-white">{signal.title}</h3>
+        {biResult.riskSignals.length === 0 ? (
+          <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 text-slate-400 text-sm text-center">
+            Aktif veri setinizde tespiti yapılan kritik bir risk sinyali bulunmamaktadır.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {biResult.riskSignals.map((signal: BusinessRiskSignal) => (
+              <div
+                key={signal.id}
+                className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition-all shadow-lg space-y-4"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {getSeverityBadge(signal.severity)}
+                    <h3 className="text-base font-bold text-white">{signal.title}</h3>
+                  </div>
+                  <div className="text-xs text-slate-400 bg-slate-800/60 px-3 py-1 rounded-lg border border-slate-700/50">
+                    Tetiklenen Kural: <span className="font-mono text-indigo-300">{signal.conditionTriggered}</span>
+                  </div>
                 </div>
-                <div className="text-xs text-slate-400 bg-slate-800/60 px-3 py-1 rounded-lg border border-slate-700/50">
-                  Tetiklenen Kural: <span className="font-mono text-indigo-300">{signal.conditionTriggered}</span>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/60 p-4 rounded-xl border border-slate-800/60">
-                <div>
-                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-                    🔍 Veriye Dayalı Kanıt
-                  </span>
-                  <p className="text-sm text-slate-200">{signal.evidence}</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/60 p-4 rounded-xl border border-slate-800/60">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
+                      🔍 Veriye Dayalı Kanıt
+                    </span>
+                    <p className="text-sm text-slate-200">{signal.evidence}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider block mb-1">
+                      🎯 Önerilen Aksiyon
+                    </span>
+                    <p className="text-sm text-indigo-200 font-medium">{signal.actionRequired}</p>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider block mb-1">
-                    🎯 Önerilen Aksiyon
-                  </span>
-                  <p className="text-sm text-indigo-200 font-medium">{signal.actionRequired}</p>
-                </div>
-              </div>
 
-              <div className="flex items-center justify-end gap-3 pt-1">
-                <button className="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors flex items-center gap-1.5 shadow-md shadow-indigo-600/10">
-                  Aksiyonu Başlat <ChevronRight className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center justify-end gap-3 pt-1">
+                  <button className="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors flex items-center gap-1.5 shadow-md shadow-indigo-600/10">
+                    Aksiyonu Başlat <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* NLP Reviews & Feedback Complaints Cluster */}
@@ -213,7 +244,11 @@ export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
               <MessageSquare className="w-5 h-5 text-indigo-400" /> Customer Review NLP Complaint Clusters
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              NLP Katmanı tarafından 1.420 yorum otomatik analiz edilmiş ve ana problem konularına göre kümelenmiştir.
+              {nlpData?.hasComments ? (
+                <span>NLP Katmanı tarafından <strong>{nlpData.totalComments.toLocaleString('tr-TR')} yorum</strong> (Kolon: <code className="text-indigo-300">{nlpData.columnHeader}</code>) otomatik analiz edilmiş ve ana konulara göre kümelenmiştir.</span>
+              ) : (
+                <span>Aktif veri setiniz için metin/yorum analizi görünümü.</span>
+              )}
             </p>
           </div>
           <span className="text-xs px-3 py-1 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800">
@@ -221,47 +256,33 @@ export const DecisionCenter: React.FC<DecisionCenterProps> = () => {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-          <div className="p-4 rounded-xl bg-slate-950/80 border border-red-500/20 space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Şikayet Konusu #1</span>
-              <span className="text-red-400 font-bold">%30.2</span>
-            </div>
-            <div className="text-sm font-bold text-white">Kargo & Teslimat Gecikmesi</div>
-            <div className="text-xs text-slate-400">430 Müşteri Yorumu</div>
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-              <div className="bg-red-500 h-full rounded-full" style={{ width: '30.2%' }}></div>
-            </div>
+        {nlpData?.hasComments && nlpData.clusters.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            {nlpData.clusters.slice(0, 3).map((item, idx) => (
+              <div key={item.topic} className={`p-4 rounded-xl bg-slate-950/80 border space-y-2 ${idx === 0 ? 'border-red-500/20' : 'border-amber-500/20'}`}>
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Şikayet Konusu #{idx + 1}</span>
+                  <span className={`font-bold ${idx === 0 ? 'text-red-400' : 'text-amber-400'}`}>%{item.percentage}</span>
+                </div>
+                <div className="text-sm font-bold text-white">{item.topic}</div>
+                <div className="text-xs text-slate-400">{item.count} Müşteri Yorumu</div>
+                <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, item.percentage)}%` }}></div>
+                </div>
+              </div>
+            ))}
           </div>
-
-          <div className="p-4 rounded-xl bg-slate-950/80 border border-amber-500/20 space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Şikayet Konusu #2</span>
-              <span className="text-amber-400 font-bold">%8.5</span>
-            </div>
-            <div className="text-sm font-bold text-white">Beden / Ebat Uyuşmazlığı</div>
-            <div className="text-xs text-slate-400">120 Müşteri Yorumu</div>
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-              <div className="bg-amber-500 h-full rounded-full" style={{ width: '8.5%' }}></div>
-            </div>
+        ) : (
+          <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 text-sm leading-relaxed">
+            Aktif yüklenen veri setinde (veya birleşik dosyalarda) müşteri yorum/metin kolonu tespit edilmedi.
+            Eski yorum veri setini çıkardıysanız veya başka bir veri seti eklediyseniz, yorum analizi için metin/şikayet kolonu içeren bir CSV/Excel dosyasını <strong className="text-indigo-300">Verilerim</strong> sayfasından yükleyebilirsiniz.
           </div>
-
-          <div className="p-4 rounded-xl bg-slate-950/80 border border-amber-500/20 space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Şikayet Konusu #3</span>
-              <span className="text-amber-400 font-bold">%6.7</span>
-            </div>
-            <div className="text-sm font-bold text-white">Ambalaj / Paket Kutusunda Hasar</div>
-            <div className="text-xs text-slate-400">95 Müşteri Yorumu</div>
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-              <div className="bg-amber-500 h-full rounded-full" style={{ width: '6.7%' }}></div>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
 };
 
 export default DecisionCenter;
+
 

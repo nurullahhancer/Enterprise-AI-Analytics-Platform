@@ -520,13 +520,13 @@ export default function AIChat({
                 </span>
               </div>
               <div 
-                style={{ color: isDark ? '#f8fafc' : '#09090b' }}
+                style={msg.role === 'user' ? { color: '#ffffff' } : { color: isDark ? '#f8fafc' : '#09090b' }}
                 className={cn(
-                  "min-w-0 rounded-xl px-4 py-3 text-xs leading-relaxed shadow-xs md:text-sm font-medium",
+                  "min-w-0 rounded-xl px-4 py-3 text-xs leading-relaxed shadow-xs md:text-sm font-semibold",
                   msg.role === 'user' && "whitespace-pre-wrap",
                   msg.role === 'user' 
-                    ? "rounded-tr-xs bg-blue-600 font-medium !text-white" 
-                    : "rounded-tl-xs border border-slate-200 bg-slate-50 text-zinc-950 dark:border-slate-800 dark:bg-slate-900/80 dark:text-slate-100"
+                    ? "rounded-tr-xs bg-blue-600 !text-white shadow-sm" 
+                    : "rounded-tl-xs border border-slate-200 bg-slate-50 text-slate-900 dark:border-slate-800 dark:bg-slate-900/80 dark:text-slate-100"
                 )}
               >
                 {msg.role === 'assistant' ? <MarkdownContent content={msg.content} /> : msg.content}
@@ -573,8 +573,8 @@ export default function AIChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Mesajınızı yazın..."
-            style={{ color: isDark ? '#ffffff' : '#000000', fontWeight: 600 }}
-            className="w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-black placeholder:font-normal placeholder:text-slate-500 outline-none transition-colors focus:border-blue-500 focus:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-400 dark:focus:border-blue-500 md:text-sm"
+            style={{ color: isDark ? '#ffffff' : '#000000', backgroundColor: isDark ? '#0f172a' : '#ffffff', fontWeight: 600 }}
+            className="w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-semibold !text-slate-950 placeholder:font-normal placeholder:text-slate-500 outline-none transition-colors focus:border-blue-500 focus:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:!text-white dark:placeholder:text-slate-400 dark:focus:border-blue-500 md:text-sm"
             disabled={isLoading || Boolean(quotaError)}
           />
           <button
